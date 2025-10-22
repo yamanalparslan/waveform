@@ -3,57 +3,44 @@ import numpy as np
 from scipy.signal import butter, filtfilt
 import matplotlib.pyplot as plt
 
+# CSV dosyasını oku
 df = pd.read_csv("/Users/yamanalparslan/Desktop/projects/waveform/waveform.csv")
 
-print("İlk 5 satır:")
-print(df.head())
-print("\nSütun isimleri:", df.columns.tolist())
-
-# Time sütununu kontrol et
-print("\nİlk 10 time değeri:")
-print(df["time"].head(10))
-
-# Eğer time sütunu sorunluysa, yeniden oluştur
+# Zaman ve sinyal
 n_samples = len(df)
-fs_expected = 200000.0  # Java kodundaki fs değeri
+fs_expected = 300000.0  # Java kodundaki örnekleme frekansı
 dt = 1.0 / fs_expected
-
-# Yeni zaman dizisi oluştur
 t = np.arange(n_samples) * dt
 
-# Sinyal verisini al
-signal = df["vC"].to_numpy()
+vC_signal = df["vC"].to_numpy()
 
-print(f"\nÖrnekleme frekansı fs = {fs_expected} Hz")
-print(f"dt = {dt:.15e} s")
-print(f"Toplam örnek sayısı: {n_samples}")
-
-# Düşük geçiren filtre
+# Düşük geçiren filtre (SPWM pürüzlerini azaltmak için)
 fc = 500  # Hz
-b, a = butter(2, fc / (fs_expected/2), btype='low')
-vC_filtered = filtfilt(b, a, signal)
+b, a = butter(2, fc / (fs_expected / 2), btype='low')
+vC_filtered = filtfilt(b, a, vC_signal)
+
+# 220 V RMS ölçeğine çevir
+vC_scaled = vC_filtered * (220.0 / np.max(np.abs(vC_filtered)))
 
 plt.figure(figsize=(12,6))
 
 # Alt grafik 1: Tüm sinyal
 plt.subplot(2,1,1)
-plt.plot(t, signal, label='Orijinal vC', alpha=0.5)
-plt.plot(t, vC_filtered, label='Filtrelenmiş vC', linewidth=2)
-plt.title("Filtreli Çıkış vC (Tüm Sinyal)")
+plt.plot(t, vC_scaled, label='Filtrelenmiş vC (220V ölçekli)', linewidth=2)
+plt.title("Çıkış Gerilimi vC (Tüm Sinyal)")
 plt.xlabel("Zaman (s)")
 plt.ylabel("Gerilim (V)")
 plt.legend()
 plt.grid(True)
 
 # Alt grafik 2: İlk 2 periyot yakınlaştırma
-plt.subplot(2,1,2)
-period = 1.0 / 50.0  # 50 Hz için periyot
+period = 1.0 / 50.0  # 50 Hz
 samples_per_period = int(fs_expected * period)
 zoom_samples = samples_per_period * 2
 
-plt.plot(t[:zoom_samples], signal[:zoom_samples], label='Orijinal vC', alpha=0.5)
-plt.plot(t[:zoom_samples], vC_filtered[:zoom_samples], label='Filtrelenmiş vC', linewidth=2)
-plt.title("Filtreli Çıkış vC (İlk 2 Periyot - Yakınlaştırma)")
+plt.subplot(2,1,2)
+plt.plot(t[:zoom_samples], vC_scaled[:zoom_samples], label='Filtrelenmiş vC (220V ölçekli)', linewidth=2)
+plt.title("Çıkış Gerilimi vC (İlk 2 Periyot Yakınlaştırma)")
 plt.xlabel("Zaman (s)")
 plt.ylabel("Gerilim (V)")
 plt.legend()

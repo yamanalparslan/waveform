@@ -2,21 +2,22 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 
-public class InverterSimulation {
+public class BoostInverterSimulation {
     // Konfigürasyon
-    static final double Vdc = 12.0;        
-    static final double fOut = 50.0;        // Çıkış frekansı 50 Hz
-    static final double fCarrier = 20000;   // Carrier frekansı 20 kHz
-    static final double modulationIndex = 0.9;
-    static final double simTime = 0.1;      // 5 periyot (0.1 s)
-    static final double fs = 200000.0;      // Örnekleme frekansı
+    static final double Vdc = 12.0;           // DC besleme
+    static final double VacRMS = 220.0;       // Hedef AC RMS
+    static final double fOut = 60.0;          // Çıkış frekansı 50 Hz
+    static final double fCarrier = 30000.0;   // Carrier frekansı 20 kHz
+    static final double modulationIndex = 0.95;
+    static final double simTime = 0.2;        // Simülasyon süresi 0.2 s
+    static final double fs = 200000.0;        // Örnekleme frekansı
 
-    // LC filtre ve yük
-    static final double L = 0.005;          // Indüktans 5 mH
-    static final double C = 100e-6;         // Kapasitans 100 µF
-    static final double Rload = 10.0;      
-    static final double ESR_L = 0.1;        // İndüktans seri direnci (opsiyonel)
-    static final double ESR_C = 0.05;       // Kapasitans seri direnci (opsiyonel)
+    // LC filtre ve yük (boost ve 220V çıkış için ayarlandı)
+    static final double L = 0.01;            // Indüktans 10 mH
+    static final double C = 470e-6;          // Kapasitans 470 µF
+    static final double Rload = 100.0;      
+    static final double ESR_L = 0.1;
+    static final double ESR_C = 0.05;
 
     public static void main(String[] args) {
         try {
@@ -33,9 +34,8 @@ public class InverterSimulation {
 
         double iL = 0.0;
         double vC = 0.0;
-        double halfV = Vdc / 2.0;
+        double Vpeak = VacRMS * Math.sqrt(2);  // AC pik değeri
 
-        // Dosya yolu - kullanıcıya göre özelleştirilebilir
         String outputPath = "waveform.csv";
         PrintWriter pw = new PrintWriter(new FileWriter(outputPath));
         pw.println("time,ua_switch,ub_switch,vd_ab,il,vC,load_v");
@@ -50,16 +50,16 @@ public class InverterSimulation {
         for (int n = 0; n < steps; n++) {
             double t = n * dt;
 
-            // Sinüsoidal referans ve carrier (triangle wave daha iyi olabilir)
-            double ref = modulationIndex * Math.sin(2.0 * Math.PI * fOut * t);
-            double carrier = Math.sin(2.0 * Math.PI * fCarrier * t);
+            // Sinüsoidal referans ve carrier
+            double ref = modulationIndex * Math.sin(2.0 * Math.PI * fOut * t) * Vpeak;
+            double carrier = Math.sin(2.0 * Math.PI * fCarrier * t) * Vpeak;
 
             // SPWM anahtarlama
-            double va = (ref >= carrier) ? halfV : -halfV;
-            double vb = (-ref >= carrier) ? halfV : -halfV;
+            double va = (ref >= carrier) ? Vdc / 2 : -Vdc / 2;
+            double vb = (-ref >= carrier) ? Vdc / 2 : -Vdc / 2;
             double vd_ab = va - vb;
 
-            // Euler integrasyonu ile LC filtre (ESR dahil - opsiyonel)
+            // Euler integrasyonu ile LC filtre
             double diL_dt = (vd_ab - vC - iL * ESR_L) / L;
             double dvC_dt = (iL - vC / Rload - vC * ESR_C / Rload) / C;
 
@@ -71,7 +71,6 @@ public class InverterSimulation {
             pw.printf("%.9f,%.3f,%.3f,%.3f,%.6f,%.6f,%.6f%n", 
                      t, va, vb, vd_ab, iL, vC, loadV);
 
-            // İlerleme göstergesi
             if (n % (steps / 10) == 0) {
                 System.out.printf("İlerleme: %.0f%%%n", (n * 100.0 / steps));
             }
@@ -79,7 +78,6 @@ public class InverterSimulation {
 
         pw.close();
         long endTime = System.currentTimeMillis();
-        
         System.out.printf("Simülasyon tamamlandı. Süre: %.2f s%n", (endTime - startTime) / 1000.0);
         System.out.printf("Dosya oluşturuldu: %s%n", outputPath);
         System.out.printf("Toplam veri noktası: %d%n", steps);
