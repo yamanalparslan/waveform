@@ -131,6 +131,24 @@ class InfluxStore:
         records = [daily_to_point(a) for a in aggregates]
         await self._client.write_api().write(bucket=BUCKET_DAILY, record=records)
 
+    async def query_twin_window(
+        self, start: datetime, stop: datetime
+    ) -> dict[str, dict[datetime, float]]:
+        """`twin_expected`'dan tesis bazlı beklenen üretim serilerini okur."""
+        flux = f"""
+from(bucket: "{BUCKET_RAW}")
+  |> range(start: {start.isoformat()}, stop: {stop.isoformat()})
+  |> filter(fn: (r) => r._measurement == "{MEASUREMENT_TWIN}")
+  |> filter(fn: (r) => r._field == "expected_ac_kw")
+"""
+        tables = await self._client.query_api().query(flux)
+        result: dict[str, dict[datetime, float]] = {}
+        for table in tables:
+            for record in table.records:
+                plant_id = str(record.values.get("plant_id", ""))
+                result.setdefault(plant_id, {})[record.get_time()] = float(record.get_value())
+        return result
+
     async def query_raw_window(self, start: datetime, stop: datetime) -> list[RawSample]:
         """`lm_raw`'dan bir zaman penceresini (tüm tesisler) RawSample listesi olarak okur."""
         flux = f"""

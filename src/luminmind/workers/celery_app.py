@@ -14,6 +14,8 @@ app = Celery(
         "luminmind.workers.tasks.ingestion",
         "luminmind.workers.tasks.downsample",
         "luminmind.workers.tasks.twin",
+        "luminmind.workers.tasks.comparison",
+        "luminmind.workers.tasks.arbitrage",
     ],
 )
 
@@ -40,5 +42,15 @@ app.conf.beat_schedule = {
         "task": "luminmind.downsample_previous_day",
         # gece 00:30 UTC: dünün lm_raw verisi → lm_hourly + lm_daily
         "schedule": crontab(minute=30, hour=0),
+    },
+    "detect-anomalies": {
+        "task": "luminmind.detect_anomalies",
+        # gece 01:00 UTC (downsample sonrası): dünün beklenen vs gerçek analizi
+        "schedule": crontab(minute=0, hour=1),
+    },
+    "plan-arbitrage": {
+        "task": "luminmind.plan_arbitrage",
+        # 12:00 UTC = 15:00 TRT (GÖP sonuçları ~14:00 TRT'de açıklanır): yarının planı
+        "schedule": crontab(minute=0, hour=12),
     },
 }

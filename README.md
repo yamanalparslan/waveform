@@ -2,7 +2,7 @@
 
 Bulut API tabanlı GES (güneş enerji santrali) izleme, dijital ikiz ve BESS/enerji arbitrajı platformu.
 
-- **Durum:** Faz 0–4 tamamlandı — detaylı yol haritası için [PLAN.md](PLAN.md)
+- **Durum:** Faz 0–5 tamamlandı — detaylı yol haritası için [PLAN.md](PLAN.md)
 - **Stack:** Python 3.11+, FastAPI, Celery + Redis, PostgreSQL, InfluxDB, pvlib, pandas
 
 ## Fazlar
@@ -11,7 +11,7 @@ Bulut API tabanlı GES (güneş enerji santrali) izleme, dijital ikiz ve BESS/en
 2. ✅ Hibrit veritabanı (PostgreSQL meta + InfluxDB zaman serileri)
 3. ✅ GES dijital ikiz motoru (pvlib + Open-Meteo)
 4. ✅ BESS modelleme ve BMS kalibrasyonu (Coulomb Counting + EKF)
-5. Karşılaştırma motoru + EPİAŞ arbitraj algoritması
+5. ✅ Karşılaştırma motoru + EPİAŞ arbitraj algoritması
 6. Backend API + docker-compose konteynerizasyonu
 
 ## Geliştirme

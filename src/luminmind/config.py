@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     sma_client_id: str = ""
     sma_client_secret: str = ""
 
+    # EPİAŞ Şeffaflık — servis hesabı gelene kadar mock fiyatlar kullanılır
+    lm_use_mock_prices: bool = True
+    epias_base_url: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

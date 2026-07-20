@@ -348,13 +348,13 @@ Her faz **çalışan, test edilmiş bir dikey dilimle** biter. Bağımlılık zi
 - **Dilim çıktısı:** sentetik profil üzerinde EKF, gerçek SoC'yi tolerans içinde takip ediyor (test raporlu).
 
 ### Faz 5 — Karşılaştırma + Arbitraj
-- [ ] `comparison.py`: 15 dk hizalı beklenen/gerçek sapma serisi (gece saatleri ve düşük ışınım filtreli)
-- [ ] Kural tabanlı sınıflandırıcılar: kalıcı sabit oranlı kayıp → **kirlilik**; günün belirli saatinde tekrarlayan çukur → **gölgelenme**; string bazlı ani basamak düşüş → **mikro çatlak** şüphesi
-- [ ] İstatistiksel taban: hareketli medyan + MAD ile eşikleme, art arda N pencere kuralı
-- [ ] Anomali olaylarının PostgreSQL'e yazımı (aç/kapa yaşam döngüsü, tekrar tekilleştirme)
-- [ ] EPİAŞ istemci arayüzü + `mock_prices.py` (gerçek Şeffaflık 2.0 şemasıyla aynı yapı)
-- [ ] `optimizer.py`: LP formülasyonu — amaç: gelir maksimizasyonu; kısıtlar: SoC sınırları, C-rate, çevrim başına derinlik, şebeke bağlantı gücü (`scipy.optimize.linprog`)
-- [ ] Celery görevi: her gün GÖP fiyatları (mock) → ertesi günün şarj/deşarj planı → `ARBITRAGE_PLANS`
+- [x] `comparison.py`: 15 dk hizalı beklenen/gerçek sapma serisi (gece saatleri ve düşük ışınım filtreli)
+- [x] Kural tabanlı sınıflandırıcılar: kalıcı sabit oranlı kayıp → **kirlilik**; günün belirli saatinde tekrarlayan çukur → **gölgelenme**; string bazlı ani basamak düşüş → **mikro çatlak** şüphesi
+- [x] İstatistiksel taban: hareketli medyan + MAD ile eşikleme, art arda N pencere kuralı
+- [x] Anomali olaylarının PostgreSQL'e yazımı (aç/kapa yaşam döngüsü, tekrar tekilleştirme)
+- [x] EPİAŞ istemci arayüzü + `mock_prices.py` (gerçek Şeffaflık 2.0 şemasıyla aynı yapı)
+- [x] `optimizer.py`: LP formülasyonu — amaç: gelir maksimizasyonu; kısıtlar: SoC sınırları, C-rate, çevrim başına derinlik, şebeke bağlantı gücü (`scipy.optimize.linprog`)
+- [x] Celery görevi: her gün GÖP fiyatları (mock) → ertesi günün şarj/deşarj planı → `ARBITRAGE_PLANS`
 - **Dilim çıktısı:** sapma senaryolu sentetik veride doğru sınıf etiketi; örnek fiyat gününde pozitif beklenen gelirli plan.
 
 ### Faz 6 — Backend API + Konteynerizasyon
