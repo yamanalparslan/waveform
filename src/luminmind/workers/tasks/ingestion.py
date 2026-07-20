@@ -1,20 +1,37 @@
 """15 dakikalık ingestion görevi.
 
-Faz 1 dikey dilimi: adaptörden (mock veya gerçek) veri çek, normalize et ve
-yapılandırılmış log satırı olarak yaz. Faz 2'de log yerine InfluxDB `lm_raw`
-bucket'ına yazım bağlanacak; akışın geri kalanı değişmeyecek.
+Akış: adaptörden (mock veya gerçek) veri çek → normalize et → InfluxDB `lm_raw`
+bucket'ına yaz. `INFLUX_URL` boşsa (Influx'sız dev/test modu) noktalar yalnızca
+loglanır; akışın geri kalanı aynıdır.
 """
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 from luminmind.adapters import MockAdapter, VendorAdapter
 from luminmind.config import Settings, get_settings
+from luminmind.core.influx import InfluxStore
 from luminmind.core.schemas import TelemetryPoint
 from luminmind.workers.celery_app import app
 
 logger = logging.getLogger(__name__)
+
+
+class TelemetrySink(Protocol):
+    """Normalize edilmiş noktaların yazıldığı hedef (Influx veya test fake'i)."""
+
+    async def write_telemetry(self, points: Sequence[TelemetryPoint]) -> None: ...
+
+
+class LogSink:
+    """Influx yapılandırılmamışken noktaları loglayan varsayılan hedef."""
+
+    async def write_telemetry(self, points: Sequence[TelemetryPoint]) -> None:
+        for point in points:
+            logger.debug("point %s", point.model_dump_json(exclude_none=True))
 
 
 def build_adapters(settings: Settings) -> list[VendorAdapter]:
@@ -75,19 +92,30 @@ async def ingest_adapter(adapter: VendorAdapter, since: datetime) -> list[Teleme
     return collected
 
 
-async def run_ingestion(settings: Settings | None = None) -> int:
-    """Tüm adaptörleri çalıştırır; toplanan nokta sayısını döndürür."""
-    settings = settings or get_settings()
+async def _ingest_to(sink: TelemetrySink, settings: Settings) -> int:
     since = datetime.now(tz=UTC) - timedelta(minutes=settings.ingestion_interval_minutes)
     total = 0
     for adapter in build_adapters(settings):
         points = await ingest_adapter(adapter, since=since)
-        # Faz 2: burada InfluxDB lm_raw yazımı yapılacak
-        for point in points:
-            logger.debug("point %s", point.model_dump_json(exclude_none=True))
+        await sink.write_telemetry(points)
         total += len(points)
     logger.info("ingestion run complete: %d points", total)
     return total
+
+
+async def run_ingestion(
+    settings: Settings | None = None, sink: TelemetrySink | None = None
+) -> int:
+    """Tüm adaptörleri çalıştırıp noktaları hedefe yazar; nokta sayısını döndürür."""
+    settings = settings or get_settings()
+    if sink is not None:
+        return await _ingest_to(sink, settings)
+    if settings.influx_url:
+        async with InfluxStore(
+            url=settings.influx_url, org=settings.influx_org, token=settings.influx_token
+        ) as store:
+            return await _ingest_to(store, settings)
+    return await _ingest_to(LogSink(), settings)
 
 
 @app.task(name="luminmind.ingest_all_plants")  # type: ignore[untyped-decorator]  # celery dekoratörü tipsiz

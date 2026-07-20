@@ -12,6 +12,17 @@ class Settings(BaseSettings):
     lm_env: str = "dev"
     lm_log_level: str = "INFO"
 
+    # PostgreSQL
+    postgres_dsn: str = "postgresql+asyncpg://luminmind:changeme@localhost:5432/luminmind"
+
+    # InfluxDB — url boşsa ingestion yalnızca loglar (Influx'sız dev/test modu)
+    influx_url: str = ""
+    influx_org: str = "luminmind"
+    influx_token: str = ""
+
+    # Üretici token şifreleme (Fernet anahtarı; üretimde zorunlu)
+    credentials_enc_key: str = ""
+
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
     ingestion_interval_minutes: int = 15

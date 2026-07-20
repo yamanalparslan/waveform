@@ -44,15 +44,38 @@ services:
     ports:
       - "6379:6379"
 
+  # Tek seferlik kurulum: migration + Influx bucket'ları + seed
+  init:
+    build: .
+    command: >
+      sh -c "alembic upgrade head
+             && python -m luminmind.scripts.bootstrap_influx
+             && python -m luminmind.scripts.seed"
+    env_file: .env
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://luminmind:${POSTGRES_PASSWORD:-changeme}@postgres:5432/luminmind
+      INFLUX_URL: http://influxdb:8086
+    depends_on:
+      postgres:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+
   worker:
     build: .
     command: celery -A luminmind.workers.celery_app worker --loglevel=INFO
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql+asyncpg://luminmind:${POSTGRES_PASSWORD:-changeme}@postgres:5432/luminmind
+      INFLUX_URL: http://influxdb:8086
     depends_on:
       redis:
         condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
 
   beat:
     build: .

@@ -33,3 +33,19 @@ async def test_run_ingestion_mock_end_to_end():
     # 1 mock tesis × 4 invertör × en az 1 slot
     assert total >= 4
     assert total % 4 == 0
+
+
+class CapturingSink:
+    def __init__(self):
+        self.points = []
+
+    async def write_telemetry(self, points):
+        self.points.extend(points)
+
+
+async def test_run_ingestion_writes_to_injected_sink():
+    settings = Settings(lm_use_mock_vendors=True, ingestion_interval_minutes=15)
+    sink = CapturingSink()
+    total = await run_ingestion(settings, sink=sink)
+    assert total == len(sink.points)
+    assert all(p.vendor_plant_id == "mock-plant-1" for p in sink.points)

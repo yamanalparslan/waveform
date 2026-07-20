@@ -304,28 +304,28 @@ Her faz **çalışan, test edilmiş bir dikey dilimle** biter. Bağımlılık zi
 **F0 → F1 → F2 → (F3, F4 paralel) → F5 → F6** (F6'nın iskeleti F1'den itibaren büyür).
 
 ### Faz 0 — İskelet (yarım gün)
-- [ ] `pyproject.toml` (ruff, mypy strict, pytest, pytest-asyncio yapılandırması)
-- [ ] Paket iskeleti (`src/luminmind/…`), `README.md`, `.env.example`, `.gitignore`
-- [ ] `docker-compose.yml`: PostgreSQL + InfluxDB + Redis servisleri (uygulama henüz yok)
-- [ ] CI: lint + typecheck + test çalıştıran basit GitHub Actions workflow
+- [x] `pyproject.toml` (ruff, mypy strict, pytest, pytest-asyncio yapılandırması)
+- [x] Paket iskeleti (`src/luminmind/…`), `README.md`, `.env.example`, `.gitignore`
+- [x] `docker-compose.yml`: PostgreSQL + InfluxDB + Redis servisleri (uygulama henüz yok)
+- [x] CI: lint + typecheck + test çalıştıran basit GitHub Actions workflow
 
 ### Faz 1 — Bulut API Adaptörleri
-- [ ] Kanonik Pydantic şemaları: `TelemetryPoint`, `PlantMeta`, `DeviceMeta`
-- [ ] `VendorAdapter` ABC: `authenticate()`, `fetch_plants()`, `fetch_telemetry(since)`
-- [ ] Mock üretici JSON fixture'ları (Huawei `getDevRealKpi`, SMA measurements benzeri)
-- [ ] `HuaweiAdapter`: XSRF-token login akışı, oturum süresi yönetimi (respx ile mock test)
-- [ ] `SmaAdapter`: OAuth2 client-credentials + refresh akışı (mock test)
-- [ ] `retry.py`: exponential backoff, 429 rate-limit'te bekleme, hata loglama (structlog yerine stdlib `logging` — bağımlılık minimal)
-- [ ] Normalizasyon katmanı: üretici yanıtı → kanonik şema dönüşümleri + birim testleri
-- [ ] Celery app + Beat: 15 dk'da bir `ingest_all_plants` görevi (bu fazda çıktıyı log'a yazar)
+- [x] Kanonik Pydantic şemaları: `TelemetryPoint`, `PlantMeta`, `DeviceMeta`
+- [x] `VendorAdapter` ABC: `authenticate()`, `fetch_plants()`, `fetch_telemetry(since)`
+- [x] Mock üretici JSON fixture'ları (Huawei `getDevRealKpi`, SMA measurements benzeri)
+- [x] `HuaweiAdapter`: XSRF-token login akışı, oturum süresi yönetimi (respx ile mock test)
+- [x] `SmaAdapter`: OAuth2 client-credentials + refresh akışı (mock test)
+- [x] `retry.py`: exponential backoff, 429 rate-limit'te bekleme, hata loglama (structlog yerine stdlib `logging` — bağımlılık minimal)
+- [x] Normalizasyon katmanı: üretici yanıtı → kanonik şema dönüşümleri + birim testleri
+- [x] Celery app + Beat: 15 dk'da bir `ingest_all_plants` görevi (bu fazda çıktıyı log'a yazar)
 - **Dilim çıktısı:** `docker compose up` → Beat 15 dk'da bir mock adaptörden veri çekip normalize edilmiş kaydı loglar.
 
 ### Faz 2 — Hibrit Veritabanı
-- [ ] SQLAlchemy 2.x async ORM modelleri (ER şemasındaki tablolar) + Alembic ilk migration
-- [ ] `core/influx.py`: async write/query sarmalayıcı, bucket bootstrap script'i
-- [ ] Ingestion görevi Influx'a yazacak şekilde bağlanır (log yerine `lm_raw`)
-- [ ] Downsampling Celery görevi (`lm_raw → lm_hourly → lm_daily`) + idempotentlik testi
-- [ ] Seed script: örnek kullanıcı + örnek tesis + mock kimlik bilgisi
+- [x] SQLAlchemy 2.x async ORM modelleri (ER şemasındaki tablolar) + Alembic ilk migration
+- [x] `core/influx.py`: async write/query sarmalayıcı, bucket bootstrap script'i
+- [x] Ingestion görevi Influx'a yazacak şekilde bağlanır (log yerine `lm_raw`)
+- [x] Downsampling Celery görevi (`lm_raw → lm_hourly → lm_daily`) + idempotentlik testi
+- [x] Seed script: örnek kullanıcı + örnek tesis + mock kimlik bilgisi
 - **Dilim çıktısı:** 15 dk'lık mock veriler Influx'ta; saatlik agregatlar gece görevi ile üretiliyor.
 
 ### Faz 3 — Dijital İkiz
