@@ -61,6 +61,24 @@ services:
       influxdb:
         condition: service_healthy
 
+  api:
+    build: .
+    command: uvicorn luminmind.api.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql+asyncpg://luminmind:${POSTGRES_PASSWORD:-changeme}@postgres:5432/luminmind
+      INFLUX_URL: http://influxdb:8086
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+
   worker:
     build: .
     command: celery -A luminmind.workers.celery_app worker --loglevel=INFO

@@ -358,11 +358,11 @@ Her faz **çalışan, test edilmiş bir dikey dilimle** biter. Bağımlılık zi
 - **Dilim çıktısı:** sapma senaryolu sentetik veride doğru sınıf etiketi; örnek fiyat gününde pozitif beklenen gelirli plan.
 
 ### Faz 6 — Backend API + Konteynerizasyon
-- [ ] JWT auth (login/refresh/me), şifre hash (`passlib` yerine `hashlib.scrypt` — bağımlılık minimal; gerekirse `bcrypt`)
-- [ ] Router'lar: plants, timeseries, comparison, anomalies, bess, prices, arbitrage (bkz. §4)
-- [ ] OpenAPI şemasının dashboard ekibiyle paylaşılabilir hale getirilmesi (örnek yanıtlar dahil)
-- [ ] `Dockerfile` (multi-stage) + `docker-compose.yml`'a `api`, `worker`, `beat` servisleri
-- [ ] Uçtan uca duman testi: compose up → seed → mock ingestion → API'den zaman serisi + anomali + plan okunuyor
+- [x] JWT auth (login/refresh/me), şifre hash (`passlib` yerine `hashlib.scrypt` — bağımlılık minimal; gerekirse `bcrypt`)
+- [x] Router'lar: plants, timeseries, comparison, anomalies, bess, prices, arbitrage (bkz. §4)
+- [x] OpenAPI şemasının dashboard ekibiyle paylaşılabilir hale getirilmesi (örnek yanıtlar dahil)
+- [x] `Dockerfile` (multi-stage) + `docker-compose.yml`'a `api`, `worker`, `beat` servisleri
+- [x] Uçtan uca duman testi: compose up → seed → mock ingestion → API'den zaman serisi + anomali + plan okunuyor
 - **Dilim çıktısı:** tek `docker compose up` ile tüm platform; dashboard ekibi OpenAPI ile geliştirmeye başlayabilir.
 
 ---

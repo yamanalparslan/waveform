@@ -2,7 +2,7 @@
 
 Bulut API tabanlı GES (güneş enerji santrali) izleme, dijital ikiz ve BESS/enerji arbitrajı platformu.
 
-- **Durum:** Faz 0–5 tamamlandı — detaylı yol haritası için [PLAN.md](PLAN.md)
+- **Durum:** Faz 0–6 tamamlandı — tüm plan uygulandı — detaylı yol haritası için [PLAN.md](PLAN.md)
 - **Stack:** Python 3.11+, FastAPI, Celery + Redis, PostgreSQL, InfluxDB, pvlib, pandas
 
 ## Fazlar
@@ -12,7 +12,7 @@ Bulut API tabanlı GES (güneş enerji santrali) izleme, dijital ikiz ve BESS/en
 3. ✅ GES dijital ikiz motoru (pvlib + Open-Meteo)
 4. ✅ BESS modelleme ve BMS kalibrasyonu (Coulomb Counting + EKF)
 5. ✅ Karşılaştırma motoru + EPİAŞ arbitraj algoritması
-6. Backend API + docker-compose konteynerizasyonu
+6. ✅ Backend API + docker-compose konteynerizasyonu
 
 ## Geliştirme
 
@@ -34,6 +34,9 @@ docker compose up --build
 # beat: 15 dk'da bir mock adaptörden veri çekip lm_raw'a yazar
 # beat: her gece 00:30 UTC'de dünü lm_hourly/lm_daily'ye downsample eder
 # beat: saat başı Open-Meteo tahminiyle günün beklenen üretimini twin_expected'a yazar
+# beat: gece 01:00 UTC anomali analizi; 12:00 UTC yarının arbitraj planı
+# api:  http://localhost:8000/docs — OpenAPI dokümantasyonu (JWT ile /api/v1/*)
+#       varsayılan giriş: admin@luminmind.local / admin (seed)
 ```
 
 Gerçek üretici API'lerine geçiş: `.env` içinde `LM_USE_MOCK_VENDORS=false` yapıp

@@ -8,7 +8,10 @@ her zaman Fernet ile şifreli saklanır; anahtar `CREDENTIALS_ENC_KEY` env'den g
 import base64
 import hashlib
 import hmac
+import json
 import secrets
+import time
+from typing import Any
 
 from cryptography.fernet import Fernet
 
@@ -37,6 +40,54 @@ def verify_password(password: str, stored: str) -> bool:
         return hmac.compare_digest(digest.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
+
+
+class TokenError(ValueError):
+    """Geçersiz, süresi dolmuş veya yanlış tipte JWT."""
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _b64url_decode(segment: str) -> bytes:
+    return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+
+
+def create_jwt(claims: dict[str, Any], secret: str, ttl_s: int, token_type: str) -> str:
+    """HS256 JWT üretir (stdlib — ek bağımlılık yok). `type` claim'i access/refresh ayırır."""
+    header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    now = int(time.time())
+    payload = _b64url(
+        json.dumps(
+            {**claims, "type": token_type, "iat": now, "exp": now + ttl_s},
+            separators=(",", ":"),
+        ).encode()
+    )
+    signing_input = f"{header}.{payload}"
+    signature = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+    return f"{signing_input}.{_b64url(signature)}"
+
+
+def decode_jwt(token: str, secret: str, expected_type: str) -> dict[str, Any]:
+    """İmza + süre + tip doğrulaması yapar; geçersizse TokenError fırlatır."""
+    try:
+        header_b64, payload_b64, signature_b64 = token.split(".")
+    except ValueError as exc:
+        raise TokenError("malformed token") from exc
+    signing_input = f"{header_b64}.{payload_b64}"
+    expected_sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+    if not hmac.compare_digest(expected_sig, _b64url_decode(signature_b64)):
+        raise TokenError("invalid signature")
+    try:
+        claims: dict[str, Any] = json.loads(_b64url_decode(payload_b64))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise TokenError("malformed payload") from exc
+    if int(claims.get("exp", 0)) < int(time.time()):
+        raise TokenError("token expired")
+    if claims.get("type") != expected_type:
+        raise TokenError(f"expected {expected_type} token")
+    return claims
 
 
 def generate_enc_key() -> str:

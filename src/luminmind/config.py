@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # Üretici token şifreleme (Fernet anahtarı; üretimde zorunlu)
     credentials_enc_key: str = ""
 
+    # Auth (JWT)
+    jwt_secret: str = "changeme-dev-secret"
+    jwt_access_ttl_min: int = 30
+    jwt_refresh_ttl_min: int = 43200  # 30 gün
+
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
     ingestion_interval_minutes: int = 15

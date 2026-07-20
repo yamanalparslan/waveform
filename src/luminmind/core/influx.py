@@ -131,6 +131,36 @@ class InfluxStore:
         records = [daily_to_point(a) for a in aggregates]
         await self._client.write_api().write(bucket=BUCKET_DAILY, record=records)
 
+    async def query_plant_series(
+        self,
+        vendor_plant_id: str,
+        metric: str,
+        start: datetime,
+        stop: datetime,
+        resolution: str = "15m",
+    ) -> list[tuple[datetime, float]]:
+        """Tesis bazlı tek metrik serisi; cihaz değerleri zaman damgasında toplanır."""
+        sources = {
+            "15m": (BUCKET_RAW, MEASUREMENT_RAW),
+            "1h": (BUCKET_HOURLY, MEASUREMENT_HOURLY),
+            "1d": (BUCKET_DAILY, MEASUREMENT_DAILY),
+        }
+        bucket, measurement = sources[resolution]
+        flux = f"""
+from(bucket: "{bucket}")
+  |> range(start: {start.isoformat()}, stop: {stop.isoformat()})
+  |> filter(fn: (r) => r._measurement == "{measurement}")
+  |> filter(fn: (r) => r.plant_id == "{vendor_plant_id}")
+  |> filter(fn: (r) => r._field == "{metric}")
+"""
+        tables = await self._client.query_api().query(flux)
+        totals: dict[datetime, float] = {}
+        for table in tables:
+            for record in table.records:
+                ts = record.get_time()
+                totals[ts] = totals.get(ts, 0.0) + float(record.get_value())
+        return sorted(totals.items())
+
     async def query_twin_window(
         self, start: datetime, stop: datetime
     ) -> dict[str, dict[datetime, float]]:
