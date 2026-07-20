@@ -338,13 +338,13 @@ Her faz **çalışan, test edilmiş bir dikey dilimle** biter. Bağımlılık zi
 - **Dilim çıktısı:** her tesis için Influx'ta gerçek + beklenen üretim yan yana.
 
 ### Faz 4 — BESS Modelleme (F3 ile paralel yürüyebilir)
-- [ ] 2-RC eşdeğer devre modeli veri sınıfları; OCV-SoC eğrisi temsili
-- [ ] `synthetic.py`: bilinen SoC yörüngeli sentetik şarj/deşarj profili üreteci
-- [ ] Coulomb Counting SoC + kümülatif hata testi
-- [ ] EKF implementasyonu (`numpy`): durum `[SoC, V_rc1]`, ölçüm `V_terminal` — sentetik veride RMSE < %2 hedefi
-- [ ] SoH kestirimi: kapasite kayması + iç direnç artışı takibi
-- [ ] `calibration.py`: CSV formatı sözleşmesi (`t, V, I, T`) — gerçek 8S verisi gelince parametre fit akışı hazır
-- [ ] `scaling.py`: hücre → 8S paket → rack → MW konteyner (seri/paralel ölçekleme + verim/kayıp katsayıları)
+- [x] 1-RC (Thevenin) eşdeğer devre modeli veri sınıfları; OCV-SoC eğrisi temsili
+- [x] `synthetic.py`: bilinen SoC yörüngeli sentetik şarj/deşarj profili üreteci
+- [x] Coulomb Counting SoC + kümülatif hata testi
+- [x] EKF implementasyonu (`numpy`): durum `[SoC, V_rc1]` (1-RC), ölçüm `V_terminal` — sentetik veride RMSE < %2 hedefi
+- [x] SoH kestirimi: kapasite kayması + iç direnç artışı takibi
+- [x] `calibration.py`: CSV formatı sözleşmesi (`t, V, I, T`) — gerçek 8S verisi gelince parametre fit akışı hazır
+- [x] `scaling.py`: hücre → 8S paket → rack → MW konteyner (seri/paralel ölçekleme + verim/kayıp katsayıları)
 - **Dilim çıktısı:** sentetik profil üzerinde EKF, gerçek SoC'yi tolerans içinde takip ediyor (test raporlu).
 
 ### Faz 5 — Karşılaştırma + Arbitraj

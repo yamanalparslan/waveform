@@ -21,6 +21,8 @@ dependencies = [
     "cryptography>=42.0",
     "pvlib>=0.11",
     "pandas>=2.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
@@ -69,7 +71,7 @@ mypy_path = "src"
 packages = ["luminmind"]
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "influxdb_client.*", "pvlib.*", "pandas.*"]
+module = ["celery.*", "influxdb_client.*", "pvlib.*", "pandas.*", "scipy.*"]
 ignore_missing_imports = true
 
 # pvlib/pandas tip bildirimi taşımıyor; twin modüllerinde untyped çağrılara izin
