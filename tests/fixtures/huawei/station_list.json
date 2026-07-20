@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "failCode": 0,
+  "data": [
+    {
+      "stationCode": "NE=33554616",
+      "stationName": "Konya GES 1",
+      "capacity": 1.0,
+      "stationAddr": "Konya, TR"
+    }
+  ]
+}

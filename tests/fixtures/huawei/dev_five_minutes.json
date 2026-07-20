@@ -1,0 +1,30 @@
+{
+  "success": true,
+  "failCode": 0,
+  "data": [
+    {
+      "devId": 1000000031104426,
+      "collectTime": 1784530800000,
+      "dataItemMap": {
+        "active_power": 182.4,
+        "mppt_power": 188.1,
+        "pv1_u": 612.3,
+        "pv1_i": 9.1,
+        "total_cap": 152340.5,
+        "temperature": 41.2
+      }
+    },
+    {
+      "devId": 1000000031104427,
+      "collectTime": 1784530800000,
+      "dataItemMap": {
+        "active_power": 179.9,
+        "mppt_power": 185.6,
+        "pv1_u": 609.8,
+        "pv1_i": 9.0,
+        "total_cap": 149876.0,
+        "temperature": 40.8
+      }
+    }
+  ]
+}

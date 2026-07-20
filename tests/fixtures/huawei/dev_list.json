@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "failCode": 0,
+  "data": [
+    { "id": 1000000031104426, "devTypeId": 1, "invType": "SUN2000-100KTL" },
+    { "id": 1000000031104427, "devTypeId": 1, "invType": "SUN2000-100KTL" },
+    { "id": 1000000031104999, "devTypeId": 17, "invType": null }
+  ]
+}

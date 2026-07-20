@@ -1,0 +1,27 @@
+{
+  "plantId": "sma-plant-1",
+  "measurements": [
+    {
+      "deviceId": "inv-01",
+      "timestamp": "2026-07-20T07:00:00Z",
+      "values": {
+        "pvGeneration": 182400,
+        "dcVoltage": 612.3,
+        "dcCurrent": 9.1,
+        "totalYield": 152340500,
+        "temperature": 41.2
+      }
+    },
+    {
+      "deviceId": "inv-02",
+      "timestamp": "2026-07-20T07:00:00+03:00",
+      "values": {
+        "pvGeneration": 179900,
+        "dcVoltage": 609.8,
+        "dcCurrent": 9.0,
+        "totalYield": 149876000,
+        "temperature": 40.8
+      }
+    }
+  ]
+}
