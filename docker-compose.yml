@@ -47,10 +47,7 @@ services:
   # Tek seferlik kurulum: migration + Influx bucket'ları + seed
   init:
     build: .
-    command: >
-      sh -c "alembic upgrade head
-             && python -m luminmind.scripts.bootstrap_influx
-             && python -m luminmind.scripts.seed"
+    command: sh -c "alembic upgrade head && python -m luminmind.scripts.bootstrap_influx && python -m luminmind.scripts.seed"
     env_file: .env
     environment:
       POSTGRES_DSN: postgresql+asyncpg://luminmind:${POSTGRES_PASSWORD:-changeme}@postgres:5432/luminmind
