@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Arbitraj · {{ plant.name }}{% endblock %}
+{% block content %}
+<h1>Arbitraj Planı — {{ plant.name }}</h1>
+<p class="sub">GÖP fiyatları üzerine bindirilmiş şarj/deşarj zamanlaması · saatler TRT</p>
+
+<div class="toolbar">
+  <form method="get">
+    <label for="date" style="margin:0">Gün</label>
+    <input id="date" type="date" name="date" value="{{ day_str }}">
+    <button>Göster</button>
+  </form>
+  {% if plan %}
+  <div style="margin-left:auto" title="Beklenen günlük arbitraj geliri">
+    Beklenen gelir: <span class="revenue">{{ "%.2f" | format(plan.expected_revenue_try) }} TL</span>
+  </div>
+  {% endif %}
+</div>
+
+{{ chart | safe }}
+
+{% if plan %}
+<h2>Plan detayı</h2>
+<div class="card" style="padding:0">
+<table>
+  <tr><th>Saat (TRT)</th><th>Eylem</th><th>Güç</th><th>Fiyat</th></tr>
+  {% for slot in slots %}
+  <tr>
+    <td>{{ slot.local_time }}</td>
+    <td>
+      <span class="badge {{ 'resolved' if slot.action == 'charge' else ('critical' if slot.action == 'discharge' else 'acked') }}">
+        {{ action_labels[slot.action] }}</span>
+    </td>
+    <td>{{ "%.1f" | format(slot.power_kw) }} kW</td>
+    <td>{{ "%.0f" | format(slot.price_try_mwh) }} TL/MWh</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<div class="info" style="margin-top:14px">Bu gün için kayıtlı plan yok. Planlar her gün
+12:00 UTC'de (15:00 TRT) ertesi gün için otomatik üretilir; worker üzerinden elle de
+tetikleyebilirsiniz.</div>
+{% endif %}
+{% endblock %}

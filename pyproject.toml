@@ -25,6 +25,8 @@ dependencies = [
     "scipy>=1.11",
     "fastapi>=0.111",
     "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +43,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-luminmind = ["py.typed"]
+luminmind = ["py.typed", "web/templates/*.html"]
 
 [tool.ruff]
 target-version = "py311"

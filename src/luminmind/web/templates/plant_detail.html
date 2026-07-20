@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ plant.name }}{% endblock %}
+{% block content %}
+<h1>{{ plant.name }}</h1>
+<p class="sub">{{ plant.dc_capacity_kwp or "?" }} kWp · {{ plant.vendor }} ·
+{{ plant.latitude }}, {{ plant.longitude }}</p>
+
+<div class="toolbar">
+  <form method="get">
+    <label for="date" style="margin:0">Tarih</label>
+    <input id="date" type="date" name="date" value="{{ day_str }}">
+    <button>Göster</button>
+  </form>
+</div>
+
+<h2>Üretim — gerçek vs beklenen (kW)</h2>
+{{ production_chart | safe }}
+
+<h2>İnvertörler</h2>
+<div class="card" style="padding:0">
+<table>
+  <tr><th>Cihaz</th><th>Model</th><th>AC Kapasite</th></tr>
+  {% for inv in inverters %}
+  <tr>
+    <td>{{ inv.vendor_device_id }}</td>
+    <td>{{ inv.model or "—" }}</td>
+    <td>{{ inv.ac_capacity_kw or "—" }} kW</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+{% if batteries %}
+<h2>Batarya sistemleri</h2>
+<div class="grid">
+  {% for battery in batteries %}
+  <div class="card">
+    <h3>{{ battery.chemistry }}</h3>
+    <div class="kpi">
+      <div><b>{{ battery.cells_series }}S{{ battery.cells_parallel }}P</b><span>Konfigürasyon</span></div>
+      <div><b>{{ battery.rated_energy_kwh }} kWh</b><span>Enerji</span></div>
+      <div><b>{{ battery.rated_power_kw }} kW</b><span>Güç</span></div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

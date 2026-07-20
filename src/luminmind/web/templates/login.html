@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Giriş{% endblock %}
+{% block content %}
+<div style="max-width:380px;margin:60px auto">
+  <div class="card">
+    <h1 style="margin-bottom:2px">Lumin<span style="color:var(--accent)">Mind</span></h1>
+    <p class="sub">GES izleme ve enerji arbitrajı platformu</p>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post" action="/ui/login">
+      <label for="email">E-posta</label>
+      <input id="email" name="email" type="text" autocomplete="username" required>
+      <label for="password">Şifre</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <div style="margin-top:18px"><button style="width:100%">Giriş yap</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

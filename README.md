@@ -35,6 +35,8 @@ docker compose up --build
 # beat: her gece 00:30 UTC'de dünü lm_hourly/lm_daily'ye downsample eder
 # beat: saat başı Open-Meteo tahminiyle günün beklenen üretimini twin_expected'a yazar
 # beat: gece 01:00 UTC anomali analizi; 12:00 UTC yarının arbitraj planı
+# ui:   http://localhost:8000/ui — Türkçe izleme arayüzü (genel bakış, tesis,
+#       anomaliler, arbitraj; sunucu taraflı SVG grafikler, JS gerekmez)
 # api:  http://localhost:8000/docs — OpenAPI dokümantasyonu (JWT ile /api/v1/*)
 #       varsayılan giriş: admin@luminmind.local / admin (seed)
 ```

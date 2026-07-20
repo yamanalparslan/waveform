@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Genel Bakış{% endblock %}
+{% block content %}
+<h1>Genel Bakış</h1>
+<p class="sub">{{ today_label }} · saatler TRT (Europe/Istanbul)</p>
+{% if not influx_ok %}
+<div class="info" style="margin-bottom:16px">Zaman serisi deposu yapılandırılmamış —
+üretim değerleri gösterilemiyor.</div>
+{% endif %}
+<div class="grid">
+  {% for item in plants %}
+  <a class="card" href="/ui/plants/{{ item.plant.id }}" style="color:inherit">
+    <h3>{{ item.plant.name }}</h3>
+    <span class="sub">{{ item.plant.vendor }} · {{ item.plant.vendor_plant_id }}</span>
+    <div class="kpi">
+      <div><b>{{ item.last_power }}</b><span>Anlık güç</span></div>
+      <div><b>{{ item.today_energy }}</b><span>Bugünkü üretim</span></div>
+      <div>
+        <b style="color:{{ 'var(--bad)' if item.open_anomalies else 'var(--good)' }}">
+          {{ item.open_anomalies }}</b>
+        <span>Açık anomali</span>
+      </div>
+    </div>
+  </a>
+  {% else %}
+  <div class="card">Kayıtlı tesis yok.</div>
+  {% endfor %}
+</div>
+{% endblock %}

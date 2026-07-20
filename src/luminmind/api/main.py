@@ -9,7 +9,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -19,6 +20,8 @@ from luminmind.api.schemas import HealthOut
 from luminmind.config import Settings, get_settings
 from luminmind.core.db import create_session_factory
 from luminmind.core.influx import InfluxStore
+from luminmind.web.routes import RequiresLogin
+from luminmind.web.routes import router as web_router
 
 
 def create_app(
@@ -73,6 +76,15 @@ def create_app(
     app.include_router(timeseries.router, prefix=prefix)
     app.include_router(anomalies.router, prefix=prefix)
     app.include_router(market.router, prefix=prefix)
+    app.include_router(web_router)
+
+    @app.exception_handler(RequiresLogin)
+    async def _redirect_to_login(request: Request, exc: RequiresLogin) -> Response:
+        return RedirectResponse("/ui/login", status_code=303)
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> Response:
+        return RedirectResponse("/ui")
 
     @app.get(f"{prefix}/health", response_model=HealthOut, tags=["health"])
     async def health(session: Annotated[object, Depends(get_session)]) -> HealthOut:
