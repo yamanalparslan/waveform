@@ -14,7 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from luminmind.config import get_settings
 from luminmind.core.db import create_engine, session_scope
-from luminmind.core.models import BatterySystem, Inverter, Plant, User, VendorCredential
+from luminmind.core.models import (
+    BatterySystem,
+    Inverter,
+    Plant,
+    PvArray,
+    User,
+    VendorCredential,
+)
 from luminmind.core.schemas import Vendor
 from luminmind.core.security import encrypt_payload, hash_password
 
@@ -60,6 +67,15 @@ async def seed(session: AsyncSession) -> None:
             ac_capacity_kw=250.0,
         )
         for i in range(1, 5)
+    ]
+    plant.pv_arrays = [
+        PvArray(
+            modules_per_string=25,
+            strings=73,  # 25 × 73 × 550 W ≈ 1004 kWp
+            tilt_deg=25.0,
+            azimuth_deg=180.0,
+            module_params={"pdc0": 550.0, "gamma_pdc": -0.0035},
+        )
     ]
     plant.batteries = [
         BatterySystem(

@@ -20,7 +20,7 @@ from influxdb_client.client.write.point import Point
 from influxdb_client.domain.write_precision import WritePrecision
 
 from luminmind.core.aggregate import DailyAggregate, HourlyAggregate, RawSample
-from luminmind.core.schemas import TelemetryPoint
+from luminmind.core.schemas import TelemetryPoint, TwinPoint
 
 BUCKET_RAW = "lm_raw"
 BUCKET_HOURLY = "lm_hourly"
@@ -29,6 +29,7 @@ BUCKET_DAILY = "lm_daily"
 MEASUREMENT_RAW = "pv_telemetry"
 MEASUREMENT_HOURLY = "pv_hourly"
 MEASUREMENT_DAILY = "pv_daily"
+MEASUREMENT_TWIN = "twin_expected"
 
 
 def telemetry_to_point(point: TelemetryPoint) -> Point:
@@ -42,6 +43,21 @@ def telemetry_to_point(point: TelemetryPoint) -> Point:
         record.tag("inverter_id", point.vendor_device_id)
     for name, value in point.measured_fields().items():
         record.field(name, value)
+    return record
+
+
+def twin_to_point(point: TwinPoint) -> Point:
+    record = (
+        Point(MEASUREMENT_TWIN)
+        .tag("plant_id", point.plant_id)
+        .tag("model_version", point.model_version)
+        .time(point.ts, WritePrecision.S)
+        .field("expected_ac_kw", point.expected_ac_kw)
+    )
+    if point.poa_irradiance_wm2 is not None:
+        record.field("poa_irradiance_wm2", point.poa_irradiance_wm2)
+    if point.cell_temp_c is not None:
+        record.field("cell_temp_c", point.cell_temp_c)
     return record
 
 
@@ -94,6 +110,13 @@ class InfluxStore:
         if not points:
             return
         records = [telemetry_to_point(p) for p in points]
+        await self._client.write_api().write(bucket=BUCKET_RAW, record=records)
+
+    async def write_twin(self, points: Sequence[TwinPoint]) -> None:
+        if not points:
+            return
+        records = [twin_to_point(p) for p in points]
+        # Beklenen üretim ham verilerle aynı bucket'ta tutulur (PLAN.md §3.2)
         await self._client.write_api().write(bucket=BUCKET_RAW, record=records)
 
     async def write_hourly(self, aggregates: Sequence[HourlyAggregate]) -> None:

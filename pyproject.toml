@@ -19,6 +19,8 @@ dependencies = [
     "alembic>=1.13",
     "influxdb-client[async]>=1.44",
     "cryptography>=42.0",
+    "pvlib>=0.11",
+    "pandas>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -67,8 +69,14 @@ mypy_path = "src"
 packages = ["luminmind"]
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "influxdb_client.*"]
+module = ["celery.*", "influxdb_client.*", "pvlib.*", "pandas.*"]
 ignore_missing_imports = true
+
+# pvlib/pandas tip bildirimi taşımıyor; twin modüllerinde untyped çağrılara izin
+[[tool.mypy.overrides]]
+module = "luminmind.twin.*"
+disallow_untyped_calls = false
+warn_return_any = false
 
 # influxdb-client py.typed taşıyor ama tip bildirimi eksik; bu modülde untyped
 # çağrılara izin veriyoruz

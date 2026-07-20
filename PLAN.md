@@ -329,12 +329,12 @@ Her faz **çalışan, test edilmiş bir dikey dilimle** biter. Bağımlılık zi
 - **Dilim çıktısı:** 15 dk'lık mock veriler Influx'ta; saatlik agregatlar gece görevi ile üretiliyor.
 
 ### Faz 3 — Dijital İkiz
-- [ ] Open-Meteo istemcisi (`httpx`, ışınım + sıcaklık + rüzgar; geçmiş + tahmin)
-- [ ] `plant_model.py`: PV_ARRAYS parametrelerinden `pvlib` PVSystem/ModelChain kurulumu
-- [ ] Kayıp zinciri: invertör verim eğrisi (Schneider), kablo/trafo sabit kayıpları, sayaç noktası (Köhler) — konfigüre edilebilir katsayılar
-- [ ] `expected.py`: 15 dk çözünürlükte beklenen AC üretim serisi (pandas)
-- [ ] Celery görevi: saatlik hava verisi çek → beklenen üretimi `twin_expected`'a yaz
-- [ ] Doğrulama: açık gökyüzü (clear-sky) senaryosunda pvlib referans sonuçlarıyla karşılaştırma testi
+- [x] Open-Meteo istemcisi (`httpx`, ışınım + sıcaklık + rüzgar; geçmiş + tahmin)
+- [x] `plant_model.py`: PV_ARRAYS parametrelerinden `pvlib` PVSystem/ModelChain kurulumu
+- [x] Kayıp zinciri: invertör verim eğrisi (Schneider), kablo/trafo sabit kayıpları, sayaç noktası (Köhler) — konfigüre edilebilir katsayılar
+- [x] `expected.py`: 15 dk çözünürlükte beklenen AC üretim serisi (pandas)
+- [x] Celery görevi: saatlik hava verisi çek → beklenen üretimi `twin_expected`'a yaz
+- [x] Doğrulama: açık gökyüzü (clear-sky) senaryosunda pvlib referans sonuçlarıyla karşılaştırma testi
 - **Dilim çıktısı:** her tesis için Influx'ta gerçek + beklenen üretim yan yana.
 
 ### Faz 4 — BESS Modelleme (F3 ile paralel yürüyebilir)

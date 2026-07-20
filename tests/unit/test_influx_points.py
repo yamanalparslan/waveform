@@ -1,8 +1,13 @@
 from datetime import UTC, datetime
 
 from luminmind.core.aggregate import DailyAggregate, HourlyAggregate
-from luminmind.core.influx import daily_to_point, hourly_to_point, telemetry_to_point
-from luminmind.core.schemas import TelemetryPoint, Vendor
+from luminmind.core.influx import (
+    daily_to_point,
+    hourly_to_point,
+    telemetry_to_point,
+    twin_to_point,
+)
+from luminmind.core.schemas import TelemetryPoint, TwinPoint, Vendor
 
 TS = datetime(2026, 7, 20, 7, 0, tzinfo=UTC)
 
@@ -30,6 +35,22 @@ def test_telemetry_line_protocol():
 def test_telemetry_without_device_omits_inverter_tag():
     point = TelemetryPoint(vendor=Vendor.MOCK, vendor_plant_id="p1", ts=TS, ac_power_kw=1.0)
     assert "inverter_id" not in telemetry_to_point(point).to_line_protocol()
+
+
+def test_twin_line_protocol():
+    point = TwinPoint(
+        plant_id="p1",
+        ts=TS,
+        expected_ac_kw=760.5,
+        poa_irradiance_wm2=910.2,
+        cell_temp_c=52.1,
+    )
+    line = twin_to_point(point).to_line_protocol()
+    assert line.startswith("twin_expected,")
+    assert "plant_id=p1" in line
+    assert "model_version=pvwatts-v1" in line
+    assert "expected_ac_kw=760.5" in line
+    assert "poa_irradiance_wm2=910.2" in line
 
 
 def test_hourly_line_protocol():
