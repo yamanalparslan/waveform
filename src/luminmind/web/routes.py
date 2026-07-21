@@ -107,6 +107,34 @@ def _fmt_1(x: float) -> str:
     return f"{x:,.1f}".replace(",", ".")
 
 
+async def sidebar_plants_context(
+    session: AsyncSession,
+) -> tuple[list[dict[str, Any]], list[Plant]]:
+    """Sol menüde listelenecek tesisleri ve açık anomali sayaçlarını döndürür.
+
+    Bir liste (görüntüleme için sözlükler) + ham Plant listesi döner; ikincisi
+    çağıran route'ların ilk-tesis vb. seçim yapmasına yarar.
+    """
+    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    if not plants:
+        return [], []
+    counts_rows = (
+        await session.execute(
+            select(AnomalyEvent.plant_id, func.count())
+            .where(
+                AnomalyEvent.status == "open",
+                AnomalyEvent.plant_id.in_([p.id for p in plants]),
+            )
+            .group_by(AnomalyEvent.plant_id)
+        )
+    ).all()
+    counts = {row[0]: row[1] for row in counts_rows}
+    return [
+        {"id": p.id, "name": p.name, "open_anomalies": counts.get(p.id, 0)}
+        for p in plants
+    ], list(plants)
+
+
 def _time_ago_tr(ts: datetime) -> str:
     delta = datetime.now(tz=UTC) - ts
     seconds = int(delta.total_seconds())
@@ -261,13 +289,18 @@ async def overview(
         for e in recent_events_rows
     ]
 
+    sidebar_plants = [
+        {"id": p.id, "name": p.name, "open_anomalies": open_counts.get(p.id, 0)}
+        for p in plants
+    ]
     return templates.TemplateResponse(
         request,
         "overview.html",
         {
             "user": user,
             "section": "overview",
-            "plant": plants[0] if plants else None,
+            "plant": None,  # overview'da alt-nav açık olmasın
+            "sidebar_plants": sidebar_plants,
             "plants": cards,
             "totals": totals,
             "recent_events": recent_events,
@@ -289,7 +322,7 @@ async def map_page(
     session: Annotated[AsyncSession, Depends(get_session)],
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
-    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    sidebar_plants, plants = await sidebar_plants_context(session)
     sites = [
         {"name": p.name, "lat": p.latitude, "lon": p.longitude, "capacity": p.dc_capacity_kwp}
         for p in plants
@@ -301,7 +334,8 @@ async def map_page(
         {
             "user": user,
             "section": "map",
-            "plant": plants[0] if plants else None,
+            "plant": None,
+            "sidebar_plants": sidebar_plants,
             "sites": sites,
             "sites_json": json.dumps(sites),
             "page_title": "Saha Haritası",
@@ -370,6 +404,7 @@ async def plant_detail(
 
     inverters = await plant.awaitable_attrs.inverters
     inverter_rows = _build_inverter_rows(inverters)
+    sidebar_plants, _ = await sidebar_plants_context(session)
 
     return templates.TemplateResponse(
         request,
@@ -378,6 +413,7 @@ async def plant_detail(
             "user": user,
             "section": "plant",
             "plant": plant,
+            "sidebar_plants": sidebar_plants,
             "plant_open_anomalies": await _open_anomaly_count(session, plant.id),
             "day_str": day.isoformat(),
             "kpis": kpis,
@@ -489,6 +525,7 @@ async def anomalies_page(
         "acked": sum(1 for e in events if e.status == "acked"),
         "resolved": sum(1 for e in events if e.status == "resolved"),
     }
+    sidebar_plants, _ = await sidebar_plants_context(session)
     return templates.TemplateResponse(
         request,
         "anomalies.html",
@@ -496,6 +533,7 @@ async def anomalies_page(
             "user": user,
             "section": "anomalies",
             "plant": plant,
+            "sidebar_plants": sidebar_plants,
             "plant_open_anomalies": stats["open"],
             "events": rows,
             "stats": stats,
@@ -568,6 +606,7 @@ async def arbitrage_page(
                     "price_try_mwh": slot.price_try_mwh,
                 }
             )
+    sidebar_plants, _ = await sidebar_plants_context(session)
     return templates.TemplateResponse(
         request,
         "arbitrage.html",
@@ -575,6 +614,7 @@ async def arbitrage_page(
             "user": user,
             "section": "arbitrage",
             "plant": plant,
+            "sidebar_plants": sidebar_plants,
             "plant_open_anomalies": await _open_anomaly_count(session, plant.id),
             "day_str": day.isoformat(),
             "plan": plan,
@@ -712,7 +752,8 @@ async def reports_page(
         {
             "user": user,
             "section": "reports",
-            "plant": plants[0] if plants else None,
+            "plant": None,
+            "sidebar_plants": (await sidebar_plants_context(session))[0],
             "days": days,
             "range_start": start_day.strftime("%d.%m.%Y"),
             "range_end": end_day.strftime("%d.%m.%Y"),
@@ -808,14 +849,15 @@ async def plant_new_page(
     session: Annotated[AsyncSession, Depends(get_session)],
     user: Annotated[User, Depends(require_admin)],
 ) -> HTMLResponse:
-    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    sidebar_plants, _ = await sidebar_plants_context(session)
     return templates.TemplateResponse(
         request,
         "plant_form.html",
         {
             "user": user,
             "section": "plant-new",
-            "plant": plants[0] if plants else None,
+            "plant": None,
+            "sidebar_plants": sidebar_plants,
             "editing": False,
             "form": _plant_form_defaults(),
             "post_url": "/ui/tesisler/yeni",
@@ -851,14 +893,15 @@ async def plant_new_submit(
         )
     ).one_or_none()
     if existing is not None:
-        plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+        sidebar_plants, _ = await sidebar_plants_context(session)
         return templates.TemplateResponse(
             request,
             "plant_form.html",
             {
                 "user": user,
                 "section": "plant-new",
-                "plant": plants[0] if plants else None,
+                "plant": None,
+                "sidebar_plants": sidebar_plants,
                 "editing": False,
                 "form": _plant_form_defaults(),
                 "post_url": "/ui/tesisler/yeni",
@@ -908,6 +951,7 @@ async def plant_edit_page(
     user: Annotated[User, Depends(require_admin)],
 ) -> HTMLResponse:
     plant = await _load_plant(session, plant_id)
+    sidebar_plants, _ = await sidebar_plants_context(session)
     return templates.TemplateResponse(
         request,
         "plant_form.html",
@@ -915,6 +959,7 @@ async def plant_edit_page(
             "user": user,
             "section": "plant",
             "plant": plant,
+            "sidebar_plants": sidebar_plants,
             "editing": True,
             "form": _plant_form_defaults(plant),
             "post_url": f"/ui/tesisler/{plant.id}/duzenle",
@@ -962,7 +1007,7 @@ async def users_page(
     error: str | None = None,
     success: str | None = None,
 ) -> HTMLResponse:
-    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    sidebar_plants, _ = await sidebar_plants_context(session)
     users = (await session.scalars(select(User).order_by(User.email))).all()
     users_view = [
         {
@@ -979,7 +1024,8 @@ async def users_page(
         {
             "user": user,
             "section": "users",
-            "plant": plants[0] if plants else None,
+            "plant": None,
+            "sidebar_plants": sidebar_plants,
             "users": users_view,
             "error": error, "success": success,
             "page_title": "Kullanıcılar",

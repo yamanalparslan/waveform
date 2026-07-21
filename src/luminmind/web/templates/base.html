@@ -79,6 +79,11 @@ nav.side a{
 nav.side a:hover{background:var(--surface); color:var(--text)}
 nav.side a.active{background:var(--surface); color:var(--text);
   box-shadow: inset 3px 0 0 var(--amber); padding-left:15px}
+nav.side a.plant-link{font-weight:600}
+nav.side a.plant-link .plant-name{flex:1; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap}
+nav.side a.sub{padding-left:34px; font-size:13px}
+nav.side a.sub.active{padding-left:34px} /* alt-nav aktifken sol vurgu istemiyoruz */
 nav.side .icn{width:16px; text-align:center; opacity:.85}
 nav.side .divider{height:1px; background:var(--line); margin:14px 6px}
 nav.side .section-label{font-size:10.5px; text-transform:uppercase; letter-spacing:.8px;
@@ -218,17 +223,25 @@ body.centered{display:grid; place-items:center; padding:24px}
         <span class="icn">◎</span> Saha Haritası</a>
       <a href="/ui/raporlar" class="{{ 'active' if section == 'reports' }}">
         <span class="icn">▤</span> Raporlar</a>
-      {% if plant %}
+      {% if sidebar_plants %}
       <div class="divider"></div>
-      <div class="section-label">{{ plant.name[:22] }}</div>
-      <a href="/ui/plants/{{ plant.id }}" class="{{ 'active' if section == 'plant' }}">
-        <span class="icn">▪</span> Tesis Detayı</a>
-      <a href="/ui/plants/{{ plant.id }}/anomalies" class="{{ 'active' if section == 'anomalies' }}">
-        <span class="icn">△</span> Anomaliler
-        {% if plant_open_anomalies %}<span class="badge-count">{{ plant_open_anomalies }}</span>{% endif %}
+      <div class="section-label">Tesisler</div>
+      {% for sp in sidebar_plants %}
+      <a href="/ui/plants/{{ sp.id }}"
+         class="plant-link {{ 'active' if plant and sp.id == plant.id }}">
+        <span class="icn">▪</span>
+        <span class="plant-name">{{ sp.name }}</span>
+        {% if sp.open_anomalies %}<span class="badge-count">{{ sp.open_anomalies }}</span>{% endif %}
       </a>
-      <a href="/ui/plants/{{ plant.id }}/arbitrage" class="{{ 'active' if section == 'arbitrage' }}">
+      {% if plant and sp.id == plant.id %}
+      <a href="/ui/plants/{{ plant.id }}/anomalies"
+         class="sub {{ 'active' if section == 'anomalies' }}">
+        <span class="icn">△</span> Anomaliler</a>
+      <a href="/ui/plants/{{ plant.id }}/arbitrage"
+         class="sub {{ 'active' if section == 'arbitrage' }}">
         <span class="icn">⇄</span> Arbitraj</a>
+      {% endif %}
+      {% endfor %}
       {% endif %}
       {% if user.role == 'admin' %}
       <div class="divider"></div>
