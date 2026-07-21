@@ -28,6 +28,7 @@ from luminmind.core.security import encrypt_payload, hash_password
 logger = logging.getLogger(__name__)
 
 _MOCK_PLANT_ID = "mock-plant-1"
+_PLANT_NAME = "Konya GES"
 
 
 async def seed(session: AsyncSession) -> None:
@@ -47,12 +48,17 @@ async def seed(session: AsyncSession) -> None:
         await session.scalars(select(Plant).where(Plant.vendor_plant_id == _MOCK_PLANT_ID))
     ).one_or_none()
     if plant is not None:
-        logger.info("seed already applied; nothing to do")
+        # Mevcut kurulumlarda tesis adını hedefe senkronla (idempotent rename)
+        if plant.name != _PLANT_NAME:
+            plant.name = _PLANT_NAME
+            logger.info("renamed existing plant to %s", _PLANT_NAME)
+        else:
+            logger.info("seed already applied; nothing to do")
         return
 
     plant = Plant(
         owner=admin,
-        name="Mock GES Konya 1 MW",
+        name=_PLANT_NAME,
         vendor=Vendor.MOCK.value,
         vendor_plant_id=_MOCK_PLANT_ID,
         latitude=37.87,

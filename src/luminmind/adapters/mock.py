@@ -24,7 +24,7 @@ _PLANTS = [
     PlantMeta(
         vendor=Vendor.MOCK,
         vendor_plant_id="mock-plant-1",
-        name="Mock GES Konya 1 MW",
+        name="Konya GES",
         dc_capacity_kwp=1000.0,
         latitude=37.87,
         longitude=32.48,

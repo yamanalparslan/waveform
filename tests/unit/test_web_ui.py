@@ -94,7 +94,7 @@ async def test_overview_shows_plant_card(client):
     await do_login(client)
     response = await client.get("/ui")
     assert response.status_code == 200
-    assert "Mock GES Konya 1 MW" in response.text
+    assert "Konya GES" in response.text
     assert "Anlık güç" in response.text
     assert "520" in response.text  # son ölçüm
     assert "Açık anomali" in response.text
