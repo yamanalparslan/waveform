@@ -275,6 +275,7 @@ async def overview(
             "mock_mode": settings.lm_use_mock_vendors,
             "today_label": now.astimezone(TRT).strftime("%d.%m.%Y"),
             "page_title": "Genel Bakış",
+            "auto_refresh_s": 60,
         },
     )
 
@@ -367,6 +368,9 @@ async def plant_detail(
         "pr_ok": pr >= 85.0,
     }
 
+    inverters = await plant.awaitable_attrs.inverters
+    inverter_rows = _build_inverter_rows(inverters)
+
     return templates.TemplateResponse(
         request,
         "plant_detail.html",
@@ -378,11 +382,77 @@ async def plant_detail(
             "day_str": day.isoformat(),
             "kpis": kpis,
             "production_chart": line_chart(series, TRT, unit="kW"),
-            "inverters": await plant.awaitable_attrs.inverters,
+            "inverter_rows": inverter_rows,
             "batteries": await plant.awaitable_attrs.batteries,
             "page_title": plant.name,
+            "auto_refresh_s": 60,
         },
     )
+
+
+def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
+    """İnvertör tablosu için görsel satırları hazırlar (durum/rozet/sıcaklık rengi)."""
+    from luminmind.analytics.inverter_health import (
+        CRITICAL_OVERHEAT_C,
+        OVERHEAT_C,
+        STALE_AFTER,
+    )
+
+    now = datetime.now(tz=UTC)
+    rows: list[dict[str, Any]] = []
+    for inv in inverters:
+        last_seen_local = "—"
+        health_chip = "muted"
+        health_label = "Beklemede"
+        temp_color = "var(--text)"
+
+        if inv.last_seen_at is not None:
+            age = now - inv.last_seen_at
+            last_seen_local = inv.last_seen_at.astimezone(TRT).strftime("%d.%m %H:%M")
+            if age > STALE_AFTER:
+                health_chip, health_label = "crit", "Çevrimdışı"
+            else:
+                healthy_status = (inv.last_status or "").upper() in {
+                    "AKTIF", "AKTİF", "ACTIVE", "OK", "NORMAL", "RUN", "",
+                }
+                bad_error = (inv.last_error_code or "0") not in {"0", "0.0", ""}
+                if bad_error or not healthy_status:
+                    health_chip, health_label = "crit", "Arıza"
+                elif inv.last_temp_c is not None and inv.last_temp_c > OVERHEAT_C:
+                    health_chip, health_label = "warn", "Aşırı sıcak"
+                elif inv.last_power_kw is not None and inv.last_power_kw > 0.1:
+                    health_chip, health_label = "ok", "Üretiyor"
+                else:
+                    health_chip, health_label = "info", "Bekliyor"
+
+        if inv.last_temp_c is not None:
+            if inv.last_temp_c > CRITICAL_OVERHEAT_C:
+                temp_color = "var(--coral)"
+            elif inv.last_temp_c > OVERHEAT_C:
+                temp_color = "var(--amber)"
+
+        err = inv.last_error_code
+        error_or_status = "—"
+        if err and err not in {"0", "0.0", ""}:
+            error_or_status = f"kod {err}"
+        elif inv.last_status:
+            error_or_status = inv.last_status
+
+        rows.append(
+            {
+                "vendor_device_id": inv.vendor_device_id,
+                "health_chip": health_chip,
+                "health_label": health_label,
+                "power": (
+                    f"{inv.last_power_kw:.1f} kW" if inv.last_power_kw is not None else "—"
+                ),
+                "temp": f"{inv.last_temp_c:.1f} °C" if inv.last_temp_c is not None else "—",
+                "temp_color": temp_color,
+                "error_or_status": error_or_status,
+                "last_seen": last_seen_local,
+            }
+        )
+    return rows
 
 
 # ------------------------------ Anomalies ------------------------------

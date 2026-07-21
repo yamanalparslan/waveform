@@ -69,6 +69,14 @@ class Inverter(Base):
     ac_capacity_kw: Mapped[float | None] = mapped_column(Float)
     efficiency_curve: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
+    # Sağlık durumu cache'i — Influx zaman serisinden özetlenip yazılır (inverter_sync
+    # görevi tarafından güncellenir). Kaynak yine InfluxDB, bu alanlar hızlı okuma için.
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_power_kw: Mapped[float | None] = mapped_column(Float)
+    last_temp_c: Mapped[float | None] = mapped_column(Float)
+    last_error_code: Mapped[str | None] = mapped_column(String(30))
+    last_status: Mapped[str | None] = mapped_column(String(30))  # üreticiden gelen ham durum
+
     plant: Mapped[Plant] = relationship(back_populates="inverters")
 
 

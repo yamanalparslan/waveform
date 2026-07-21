@@ -110,12 +110,66 @@ async def ingest_adapter(adapter: VendorAdapter, since: datetime) -> list[Teleme
 async def _ingest_to(sink: TelemetrySink, settings: Settings) -> int:
     since = datetime.now(tz=UTC) - timedelta(minutes=settings.ingestion_interval_minutes)
     total = 0
+    all_points: list[TelemetryPoint] = []
     for adapter in build_adapters(settings):
         points = await ingest_adapter(adapter, since=since)
         await sink.write_telemetry(points)
         total += len(points)
+        all_points.extend(points)
+    if all_points:
+        try:
+            await sync_inverter_health(all_points, settings)
+        except Exception:
+            logger.exception("inverter health sync failed")
     logger.info("ingestion run complete: %d points", total)
     return total
+
+
+async def sync_inverter_health(
+    points: list[TelemetryPoint], settings: Settings
+) -> None:
+    """Cihaz durum cache'ini günceller ve sağlık uyarılarını yazar (kural motoru)."""
+    from sqlalchemy import select
+
+    from luminmind.analytics.inverter_health import (
+        apply_findings,
+        evaluate_inverter,
+        latest_snapshots,
+        upsert_inverter_state,
+    )
+    from luminmind.core.db import create_engine, session_scope
+    from luminmind.core.models import Inverter, Plant
+
+    snapshots = latest_snapshots(points)
+    if not snapshots:
+        return
+    engine = create_engine(settings.postgres_dsn)
+    try:
+        async with session_scope(engine) as session:
+            await upsert_inverter_state(session, snapshots.values())
+        # ikinci oturum: durum yazıldıktan sonra kuralları değerlendir
+        async with session_scope(engine) as session:
+            now = datetime.now(tz=UTC)
+            plants = (await session.scalars(select(Plant))).all()
+            for plant in plants:
+                inverters = (
+                    await session.scalars(
+                        select(Inverter).where(Inverter.plant_id == plant.id)
+                    )
+                ).all()
+                findings = []
+                for inv in inverters:
+                    findings.extend(evaluate_inverter(inv, now))
+                created, resolved = await apply_findings(session, plant.id, findings, now)
+                if created or resolved:
+                    logger.info(
+                        "inverter health plant=%s created=%d resolved=%d",
+                        plant.vendor_plant_id,
+                        created,
+                        resolved,
+                    )
+    finally:
+        await engine.dispose()
 
 
 async def run_ingestion(

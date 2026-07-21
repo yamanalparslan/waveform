@@ -50,16 +50,32 @@
 <h2>Üretim — gerçek vs beklenen</h2>
 <div class="chart-wrap">{{ production_chart | safe }}</div>
 
-<h2>İnvertörler</h2>
+<h2>İnvertörler ({{ inverter_rows|length }})</h2>
 <div class="card">
 <table>
-  <tr><th>Cihaz</th><th>Model</th><th>AC Kapasite</th></tr>
-  {% for inv in inverters %}
   <tr>
-    <td class="num">{{ inv.vendor_device_id }}</td>
-    <td>{{ inv.model or "—" }}</td>
-    <td class="num">{{ inv.ac_capacity_kw or "—" }} kW</td>
+    <th>Cihaz</th>
+    <th>Durum</th>
+    <th style="text-align:right">Anlık güç</th>
+    <th style="text-align:right">Sıcaklık</th>
+    <th>Hata / Durum</th>
+    <th style="text-align:right">Son görülme</th>
   </tr>
+  {% for r in inverter_rows %}
+  <tr>
+    <td class="num">{{ r.vendor_device_id }}</td>
+    <td><span class="chip {{ r.health_chip }}">{{ r.health_label }}</span></td>
+    <td class="num" style="text-align:right">{{ r.power }}</td>
+    <td class="num" style="text-align:right; color:{{ r.temp_color }}">{{ r.temp }}</td>
+    <td>{{ r.error_or_status }}</td>
+    <td class="num" style="text-align:right; color:var(--text-faint)">{{ r.last_seen }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6">
+    <div class="note" style="padding:20px 0; text-align:center; margin:0">
+      Henüz cihaz görülmedi · ingestion çalıştıkça burada belirir
+    </div>
+  </td></tr>
   {% endfor %}
 </table>
 </div>

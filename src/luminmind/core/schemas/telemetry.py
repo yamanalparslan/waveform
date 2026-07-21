@@ -64,6 +64,10 @@ class TelemetryPoint(BaseModel):
     dc_current_a: float | None = None
     energy_total_kwh: float | None = None
     temp_c: float | None = None
+    # Cihaz sağlığı — üretici raporladıysa (Tescom `hata_kodu` / `durum`);
+    # Influx'a yazılmaz, Postgres inverters.last_* alanlarına akar.
+    error_code: str | None = None
+    status: str | None = None
 
     @field_validator("ts")
     @classmethod

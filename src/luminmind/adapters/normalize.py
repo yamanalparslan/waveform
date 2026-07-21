@@ -103,6 +103,7 @@ def normalize_tescom_devices(
         ts = _parse_tescom_ts(raw_ts, tz)
         if ts is None:
             continue
+        error_code = item.get("hata_kodu")
         points.append(
             TelemetryPoint(
                 vendor=Vendor.TESCOM,
@@ -113,6 +114,8 @@ def normalize_tescom_devices(
                 dc_voltage_v=_as_float(item.get("voltaj")),
                 dc_current_a=_as_float(item.get("akim")),
                 temp_c=_as_float(item.get("sicaklik")),
+                error_code=str(error_code) if error_code is not None else None,
+                status=item.get("durum") if isinstance(item.get("durum"), str) else None,
             )
         )
     return points
