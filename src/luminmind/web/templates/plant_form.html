@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Tesis Düzenle' if editing else 'Yeni Tesis' }}{% endblock %}
+{% block crumbs %}<a href="/ui">Genel Bakış</a> ·
+  <b>{{ 'Tesisi düzenle' if editing else 'Yeni tesis' }}</b>{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>#pick-map{height:320px; border:1px solid var(--line); border-radius:var(--r-md)}</style>
+{% endblock %}
+{% block content %}
+<h1>{{ 'Tesisi düzenle' if editing else 'Yeni tesis ekle' }}</h1>
+<p class="sub">
+  {% if editing %}Meta veri ve dijital ikiz parametrelerini güncelle
+  {% else %}Konum, üretici, kapasite ve isteğe bağlı panel dizisi{% endif %}
+</p>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if success %}<div class="success">{{ success }}</div>{% endif %}
+
+<form method="post" action="{{ post_url }}">
+  <div class="split-2">
+    <div class="card pad">
+      <h2 style="margin-top:0">Genel</h2>
+      <label>Tesis adı</label>
+      <input name="name" required value="{{ form.name }}" placeholder="Örn. Konya GES">
+
+      <label>Üretici</label>
+      <select name="vendor">
+        {% for v in ['huawei','sma','tescom','mock'] %}
+        <option value="{{ v }}" {% if v == form.vendor %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+
+      <label>Üretici tesis kimliği</label>
+      <input name="vendor_plant_id" required value="{{ form.vendor_plant_id }}"
+        placeholder="NE=xxxx veya sistem kodu">
+
+      <div class="row-inline">
+        <div style="flex:1">
+          <label>DC kapasite (kWp)</label>
+          <input name="dc_capacity_kwp" type="number" step="0.1" value="{{ form.dc_capacity_kwp }}">
+        </div>
+        <div style="flex:1">
+          <label>AC kapasite (kW)</label>
+          <input name="ac_capacity_kw" type="number" step="0.1" value="{{ form.ac_capacity_kw }}">
+        </div>
+      </div>
+
+      <label>Zaman dilimi</label>
+      <input name="timezone" value="{{ form.timezone or 'Europe/Istanbul' }}">
+    </div>
+
+    <div>
+      <div class="card pad">
+        <h2 style="margin-top:0">Konum</h2>
+        <p class="note" style="margin:0 0 10px">Haritaya tıklayarak koordinatları seçebilirsin.</p>
+        <div id="pick-map"></div>
+        <div class="row-inline" style="margin-top:12px">
+          <div style="flex:1">
+            <label>Enlem</label>
+            <input id="lat" name="latitude" type="number" step="0.0001" value="{{ form.latitude }}">
+          </div>
+          <div style="flex:1">
+            <label>Boylam</label>
+            <input id="lon" name="longitude" type="number" step="0.0001" value="{{ form.longitude }}">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if not editing %}
+  <div class="card pad" style="margin-top:16px">
+    <h2 style="margin-top:0">Panel dizisi (opsiyonel · dijital ikiz için)</h2>
+    <div class="row-inline">
+      <div style="flex:1"><label>Eğim (°)</label>
+        <input name="tilt_deg" type="number" step="1" placeholder="25"></div>
+      <div style="flex:1"><label>Azimut (°, 180=güney)</label>
+        <input name="azimuth_deg" type="number" step="1" placeholder="180"></div>
+      <div style="flex:1"><label>Modül sayısı (dizi)</label>
+        <input name="modules_per_string" type="number" placeholder="25"></div>
+      <div style="flex:1"><label>Dizi sayısı</label>
+        <input name="strings" type="number" placeholder="10"></div>
+    </div>
+    <p class="note">Boş bırakırsan panel dizisi oluşturulmaz; dijital ikiz kapasiteden
+    jenerik parametre türetir.</p>
+  </div>
+  {% endif %}
+
+  <div class="row-inline" style="margin-top:22px">
+    <button class="primary" type="submit">{{ 'Güncelle' if editing else 'Tesisi oluştur' }}</button>
+    <a class="btn" href="/ui">Vazgeç</a>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const lat0 = parseFloat(document.getElementById('lat').value) || 39.0;
+const lon0 = parseFloat(document.getElementById('lon').value) || 35.2;
+const zoom = document.getElementById('lat').value ? 10 : 6;
+const map = L.map('pick-map').setView([lat0, lon0], zoom);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {attribution:'© OpenStreetMap © CARTO', maxZoom:19, subdomains:'abcd'}).addTo(map);
+let marker = document.getElementById('lat').value
+  ? L.marker([lat0, lon0]).addTo(map) : null;
+map.on('click', e => {
+  document.getElementById('lat').value = e.latlng.lat.toFixed(4);
+  document.getElementById('lon').value = e.latlng.lng.toFixed(4);
+  if (marker) marker.setLatLng(e.latlng);
+  else marker = L.marker(e.latlng).addTo(map);
+});
+</script>
+{% endblock %}

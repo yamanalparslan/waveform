@@ -1,31 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Saha Haritası{% endblock %}
+{% block crumbs %}<b>Saha Haritası</b>{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-#map{height:560px;border:1px solid var(--line);border-radius:13px}
-.leaflet-popup-content{font:14px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif}
+#map{height:560px; border:1px solid var(--line); border-radius:var(--r-md)}
+.leaflet-popup-content{font:14px/1.4 var(--sans); color:#111}
 .leaflet-popup-content b{font-size:15px}
-.map-legend{display:flex;gap:20px;margin-top:12px;font-size:13px;color:var(--muted);flex-wrap:wrap}
-.map-legend span{display:inline-flex;align-items:center;gap:7px}
-.map-legend i{width:12px;height:12px;border-radius:50%;display:inline-block;border:2px solid #fff3}
-.map-empty{background:var(--panel);border:1px solid var(--line);border-radius:13px;
-padding:40px;text-align:center;color:var(--muted)}
+.site-label{background:#141a23e0 !important; color:var(--text) !important;
+  border:1px solid var(--line) !important; box-shadow:none !important;
+  font:600 12px var(--sans) !important; padding:2px 8px !important; border-radius:6px}
+.site-label::before{display:none}
 </style>
 {% endblock %}
 {% block content %}
 <h1>Saha Haritası</h1>
-<p class="sub">İzlenen GES sahaları · OpenStreetMap</p>
+<p class="sub">İzlenen GES sahaları · OpenStreetMap üzerinde canlı konum</p>
 
 {% if sites %}
 <div id="map"></div>
-<div class="map-legend">
-  <span><i style="background:#3fa9f5"></i> İzlenen saha</span>
-  <span>Bir işarete tıklayın: ad, güç ve koordinat</span>
+<div class="row-inline" style="margin-top:14px; color:var(--text-dim); font-size:13px">
+  <span class="chip info">İzlenen saha</span>
+  <span style="color:var(--text-faint)">Bir işarete tıkla → ad, güç, koordinat</span>
 </div>
 {% else %}
-<div class="map-empty">Koordinatı tanımlı saha yok. Tesise enlem/boylam eklendiğinde
-burada haritada belirir.</div>
+<div class="card pad" style="text-align:center; padding:60px 20px">
+  <div style="font-size:32px; opacity:.4; margin-bottom:10px">◎</div>
+  <div class="note" style="margin:0">Koordinatı tanımlı saha yok.
+  {% if user.role == 'admin' %}<a href="/ui/tesisler/yeni" style="color:var(--amber)">
+    Yeni tesis ekle →</a>{% endif %}</div>
+</div>
 {% endif %}
 {% endblock %}
 {% block scripts %}
@@ -33,28 +37,26 @@ burada haritada belirir.</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const sites = {{ sites_json | safe }};
-const map = L.map('map', {scrollWheelZoom: true}).setView([39.0, 35.2], 6);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19, subdomains: 'abcd'
-}).addTo(map);
+const map = L.map('map', {scrollWheelZoom:true}).setView([39.0, 35.2], 6);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {attribution:'© OpenStreetMap © CARTO', maxZoom:19, subdomains:'abcd'}).addTo(map);
 
 const markers = [];
 sites.forEach(s => {
   const m = L.circleMarker([s.lat, s.lon], {
-    radius: 9, color: '#0e1219', weight: 2, fillColor: '#3fa9f5', fillOpacity: 1
+    radius:10, color:'#0b0f14', weight:2, fillColor:'#f2b544', fillOpacity:1
   }).addTo(map);
   m.bindPopup(
     '<b>' + s.name + '</b><br>' +
-    (s.capacity ? (s.capacity + ' kWp<br>') : '') +
+    (s.capacity ? (s.capacity.toFixed(1) + ' kWp<br>') : '') +
     'Konum: ' + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
   );
-  m.bindTooltip(s.name, {permanent: true, direction: 'right', offset: [10, 0],
-    className: 'site-label'});
+  m.bindTooltip(s.name, {permanent:true, direction:'right', offset:[12,0],
+    className:'site-label'});
   markers.push(m);
 });
-if (markers.length > 1) {
+if (markers.length > 1)
   map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
-}
 </script>
 {% endif %}
 {% endblock %}

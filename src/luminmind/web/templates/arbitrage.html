@@ -1,45 +1,53 @@
 {% extends "base.html" %}
 {% block title %}Arbitraj · {{ plant.name }}{% endblock %}
+{% block crumbs %}<a href="/ui">Genel Bakış</a> ·
+  <a href="/ui/plants/{{ plant.id }}">{{ plant.name }}</a> · <b>Arbitraj</b>{% endblock %}
 {% block content %}
-<h1>Arbitraj Planı — {{ plant.name }}</h1>
-<p class="sub">GÖP fiyatları üzerine bindirilmiş şarj/deşarj zamanlaması · saatler TRT</p>
+<h1>Arbitraj Planı</h1>
+<p class="sub">{{ plant.name }} · EPİAŞ GÖP fiyatları üzerinden şarj/deşarj zamanlaması</p>
 
 <div class="toolbar">
-  <form method="get">
-    <label for="date" style="margin:0">Gün</label>
+  <form method="get" class="row-inline">
+    <label for="date" style="margin:0; text-transform:none">Gün</label>
     <input id="date" type="date" name="date" value="{{ day_str }}">
-    <button>Göster</button>
+    <button class="primary">Göster</button>
   </form>
   {% if plan %}
-  <div style="margin-left:auto" title="Beklenen günlük arbitraj geliri">
-    Beklenen gelir: <span class="revenue">{{ "%.2f" | format(plan.expected_revenue_try) }} TL</span>
+  <div style="margin-left:auto; text-align:right">
+    <div style="font-size:11.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-faint)">
+      Beklenen günlük gelir</div>
+    <div class="num" style="font-size:26px; font-weight:700; color:var(--teal)">
+      {{ "%.2f"|format(plan.expected_revenue_try) }} TL</div>
   </div>
   {% endif %}
 </div>
 
-{{ chart | safe }}
-
 {% if plan %}
+<h2>Fiyat eğrisi + eylem şeridi</h2>
+<div class="chart-wrap">{{ chart | safe }}</div>
+
 <h2>Plan detayı</h2>
-<div class="card" style="padding:0">
+<div class="card">
 <table>
   <tr><th>Saat (TRT)</th><th>Eylem</th><th>Güç</th><th>Fiyat</th></tr>
   {% for slot in slots %}
   <tr>
-    <td>{{ slot.local_time }}</td>
+    <td class="num">{{ slot.local_time }}</td>
     <td>
-      <span class="badge {{ 'resolved' if slot.action == 'charge' else ('critical' if slot.action == 'discharge' else 'acked') }}">
-        {{ action_labels[slot.action] }}</span>
+      {% if slot.action == 'charge' %}<span class="chip ok">Şarj</span>
+      {% elif slot.action == 'discharge' %}<span class="chip crit">Deşarj</span>
+      {% else %}<span class="chip muted">Beklemede</span>{% endif %}
     </td>
-    <td>{{ "%.1f" | format(slot.power_kw) }} kW</td>
-    <td>{{ "%.0f" | format(slot.price_try_mwh) }} TL/MWh</td>
+    <td class="num">{{ "%.1f"|format(slot.power_kw) }} kW</td>
+    <td class="num">{{ "%.0f"|format(slot.price_try_mwh) }} TL/MWh</td>
   </tr>
   {% endfor %}
 </table>
 </div>
 {% else %}
-<div class="info" style="margin-top:14px">Bu gün için kayıtlı plan yok. Planlar her gün
-12:00 UTC'de (15:00 TRT) ertesi gün için otomatik üretilir; worker üzerinden elle de
-tetikleyebilirsiniz.</div>
+<div class="info">Bu gün için kayıtlı plan yok. Planlar her gün 12:00 UTC'de (15:00 TRT)
+ertesi gün için otomatik üretilir; worker üzerinden elle de tetikleyebilirsiniz.</div>
 {% endif %}
+<p class="note">LP optimizasyonu SoC sınırları, C-rate, gün sonu enerji restorasyonu ve
+günlük çevrim limitini gözetir.</p>
 {% endblock %}

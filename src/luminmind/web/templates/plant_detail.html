@@ -1,45 +1,82 @@
 {% extends "base.html" %}
 {% block title %}{{ plant.name }}{% endblock %}
+{% block crumbs %}<a href="/ui">Genel Bakış</a> · <b>{{ plant.name }}</b>{% endblock %}
 {% block content %}
-<h1>{{ plant.name }}</h1>
-<p class="sub">{{ plant.dc_capacity_kwp or "?" }} kWp · {{ plant.vendor }} ·
-{{ plant.latitude }}, {{ plant.longitude }}</p>
+<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap">
+  <div>
+    <h1>{{ plant.name }}</h1>
+    <p class="sub">
+      <span class="chip muted">{{ plant.vendor }}</span>
+      {% if plant.dc_capacity_kwp %}<span class="chip plain">{{ "%.1f"|format(plant.dc_capacity_kwp) }} kWp</span>{% endif %}
+      {% if plant.latitude %}<span class="chip plain">{{ "%.3f"|format(plant.latitude) }}, {{ "%.3f"|format(plant.longitude) }}</span>{% endif %}
+    </p>
+  </div>
+  {% if user.role == 'admin' %}
+  <a class="btn" href="/ui/tesisler/{{ plant.id }}/duzenle">✎ Düzenle</a>
+  {% endif %}
+</div>
 
 <div class="toolbar">
-  <form method="get">
-    <label for="date" style="margin:0">Tarih</label>
+  <form method="get" class="row-inline">
+    <label for="date" style="margin:0; text-transform:none">Tarih</label>
     <input id="date" type="date" name="date" value="{{ day_str }}">
-    <button>Göster</button>
+    <button class="primary">Göster</button>
   </form>
 </div>
 
-<h2>Üretim — gerçek vs beklenen (kW)</h2>
-{{ production_chart | safe }}
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+  <div class="kpi accent-amber">
+    <div class="label">Tepe güç (gerçek)</div>
+    <div class="value">{{ kpis.peak_kw }}<small>kW</small></div>
+    <div class="trend">gün içi maksimum</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Günlük üretim</div>
+    <div class="value">{{ kpis.energy_kwh }}<small>kWh</small></div>
+    <div class="trend">15 dk toplamı</div>
+  </div>
+  <div class="kpi accent-blue">
+    <div class="label">Beklenen (ikiz)</div>
+    <div class="value">{{ kpis.expected_kwh }}<small>kWh</small></div>
+    <div class="trend">pvlib + hava</div>
+  </div>
+  <div class="kpi {{ 'accent-teal' if kpis.pr_ok else 'accent-coral' }}">
+    <div class="label">Performans oranı</div>
+    <div class="value">{{ kpis.pr }}<small>%</small></div>
+    <div class="trend {{ 'up' if kpis.pr_ok else 'down' }}">gerçek ÷ beklenen</div>
+  </div>
+</div>
+
+<h2>Üretim — gerçek vs beklenen</h2>
+<div class="chart-wrap">{{ production_chart | safe }}</div>
 
 <h2>İnvertörler</h2>
-<div class="card" style="padding:0">
+<div class="card">
 <table>
   <tr><th>Cihaz</th><th>Model</th><th>AC Kapasite</th></tr>
   {% for inv in inverters %}
   <tr>
-    <td>{{ inv.vendor_device_id }}</td>
+    <td class="num">{{ inv.vendor_device_id }}</td>
     <td>{{ inv.model or "—" }}</td>
-    <td>{{ inv.ac_capacity_kw or "—" }} kW</td>
+    <td class="num">{{ inv.ac_capacity_kw or "—" }} kW</td>
   </tr>
   {% endfor %}
 </table>
 </div>
 
 {% if batteries %}
-<h2>Batarya sistemleri</h2>
-<div class="grid">
-  {% for battery in batteries %}
-  <div class="card">
-    <h3>{{ battery.chemistry }}</h3>
-    <div class="kpi">
-      <div><b>{{ battery.cells_series }}S{{ battery.cells_parallel }}P</b><span>Konfigürasyon</span></div>
-      <div><b>{{ battery.rated_energy_kwh }} kWh</b><span>Enerji</span></div>
-      <div><b>{{ battery.rated_power_kw }} kW</b><span>Güç</span></div>
+<h2>Batarya sistemi (BESS)</h2>
+<div class="grid cards-3">
+  {% for b in batteries %}
+  <div class="card pad">
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <span style="font-weight:600">{{ b.chemistry }}</span>
+      <span class="chip violet">{{ b.cells_series }}S{{ b.cells_parallel }}P</span>
+    </div>
+    <div class="mini-metrics" style="margin-top:14px">
+      <div><div class="k">Enerji</div><div class="v">{{ b.rated_energy_kwh }} kWh</div></div>
+      <div><div class="k">Güç</div><div class="v">{{ b.rated_power_kw }} kW</div></div>
+      <div><div class="k">Paket</div><div class="v">{{ b.pack_count }}</div></div>
     </div>
   </div>
   {% endfor %}

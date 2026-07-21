@@ -1,29 +1,126 @@
 {% extends "base.html" %}
 {% block title %}Genel Bakış{% endblock %}
+{% block crumbs %}<b>Genel Bakış</b> · {{ today_label }} TRT{% endblock %}
 {% block content %}
-<h1>Genel Bakış</h1>
-<p class="sub">{{ today_label }} · saatler TRT (Europe/Istanbul)</p>
+<h1>Portföy Özeti</h1>
+<p class="sub">{{ plants|length }} tesis izleniyor · saatler TRT (Europe/Istanbul)</p>
+
 {% if not influx_ok %}
-<div class="info" style="margin-bottom:16px">Zaman serisi deposu yapılandırılmamış —
-üretim değerleri gösterilemiyor.</div>
+<div class="info">Zaman serisi deposu yapılandırılmamış — anlık değerler gösterilemiyor.
+Worker ilk döngüyü çalıştırınca burada güç ve enerji verileri belirir.</div>
 {% endif %}
-<div class="grid">
-  {% for item in plants %}
-  <a class="card" href="/ui/plants/{{ item.plant.id }}" style="color:inherit">
-    <h3>{{ item.plant.name }}</h3>
-    <span class="sub">{{ item.plant.vendor }} · {{ item.plant.vendor_plant_id }}</span>
-    <div class="kpi">
-      <div><b>{{ item.last_power }}</b><span>Anlık güç</span></div>
-      <div><b>{{ item.today_energy }}</b><span>Bugünkü üretim</span></div>
-      <div>
-        <b style="color:{{ 'var(--bad)' if item.open_anomalies else 'var(--good)' }}">
-          {{ item.open_anomalies }}</b>
-        <span>Açık anomali</span>
+
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+  <div class="kpi accent-amber">
+    <div class="label">Anlık toplam güç</div>
+    <div class="value">{{ totals.power_kw }}<small>kW</small></div>
+    <div class="trend">{{ plants|length }} tesis toplamı</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Bugün toplam üretim</div>
+    <div class="value">{{ totals.energy_kwh }}<small>kWh</small></div>
+    <div class="trend up">{{ totals.plants_producing }} tesis üretiyor</div>
+  </div>
+  <div class="kpi accent-blue">
+    <div class="label">Toplam kurulu güç</div>
+    <div class="value">{{ totals.capacity_mwp }}<small>MWp</small></div>
+    <div class="trend">DC modül kapasitesi</div>
+  </div>
+  <div class="kpi {{ 'accent-coral' if totals.open_anomalies else 'accent-teal' }}">
+    <div class="label">Açık anomali</div>
+    <div class="value">{{ totals.open_anomalies }}</div>
+    <div class="trend {{ 'down' if totals.open_anomalies else 'up' }}">
+      {{ 'Dikkat gerektiriyor' if totals.open_anomalies else 'Portföy sağlıklı' }}
+    </div>
+  </div>
+</div>
+
+<div class="split-2" style="margin-top:22px">
+  <div>
+    <h2>Tesisler</h2>
+    <div class="grid cards-2">
+      {% for item in plants %}
+      <a class="card hoverable" href="/ui/plants/{{ item.plant.id }}" style="color:inherit">
+        <div class="plant-card-header">
+          <div>
+            <div class="plant-card-title">{{ item.plant.name }}</div>
+            <div class="plant-card-meta">
+              {{ item.plant.vendor }} · {{ item.capacity_label }}
+              {% if item.plant.latitude %} · {{ "%.2f"|format(item.plant.latitude) }},
+                {{ "%.2f"|format(item.plant.longitude) }}{% endif %}
+            </div>
+          </div>
+          <span class="chip {{ item.status_class }}">{{ item.status_label }}</span>
+        </div>
+        <div class="plant-card-body">
+          <div class="mini-metrics">
+            <div>
+              <div class="k">Anlık</div>
+              <div class="v" style="color:var(--amber)">{{ item.last_power }}</div>
+            </div>
+            <div>
+              <div class="k">Bugün</div>
+              <div class="v">{{ item.today_energy }}</div>
+            </div>
+            <div>
+              <div class="k">Anomali</div>
+              <div class="v" style="color:{{ 'var(--coral)' if item.open_anomalies else 'var(--teal)' }}">
+                {{ item.open_anomalies }}</div>
+            </div>
+          </div>
+          <div class="spark">{{ item.sparkline_svg | safe }}</div>
+        </div>
+      </a>
+      {% else %}
+      <div class="card pad" style="grid-column:1/-1">
+        <div class="note" style="margin:0; text-align:center; padding:20px 0">
+          Henüz tesis tanımlı değil.
+          {% if user.role == 'admin' %}
+          <br><a href="/ui/tesisler/yeni" style="color:var(--amber)">İlk tesisi ekle →</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div>
+    <h2>Son Olaylar</h2>
+    <div class="card">
+      {% if recent_events %}
+      {% for e in recent_events %}
+      <div style="padding:14px 18px; border-bottom:1px solid var(--line-soft)">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px">
+          <span class="chip {{ e.chip_class }}">{{ e.kind_label }}</span>
+          <span class="chip plain">{{ e.plant_name }}</span>
+          <span class="spacer" style="flex:1"></span>
+          <span class="num" style="font-size:12px; color:var(--text-faint)">{{ e.time_ago }}</span>
+        </div>
+        <div style="color:var(--text-dim); font-size:13px">{{ e.summary }}</div>
+      </div>
+      {% endfor %}
+      {% else %}
+      <div class="note" style="padding:24px 20px; text-align:center; margin:0">
+        Kayıtlı olay yok · portföy sakin
+      </div>
+      {% endif %}
+    </div>
+    <h2 style="margin-top:22px">Sistem</h2>
+    <div class="card pad" style="padding:14px 18px">
+      <div class="row-inline" style="justify-content:space-between">
+        <span style="color:var(--text-dim); font-size:13px">API</span>
+        <span class="chip ok">Çalışıyor</span>
+      </div>
+      <div class="row-inline" style="justify-content:space-between; margin-top:8px">
+        <span style="color:var(--text-dim); font-size:13px">Zaman serisi</span>
+        <span class="chip {{ 'ok' if influx_ok else 'warn' }}">
+          {{ 'Bağlı' if influx_ok else 'Yapılandırılmadı' }}</span>
+      </div>
+      <div class="row-inline" style="justify-content:space-between; margin-top:8px">
+        <span style="color:var(--text-dim); font-size:13px">Veri modu</span>
+        <span class="chip {{ 'ok' if not mock_mode else 'warn' }}">
+          {{ 'Gerçek üretici' if not mock_mode else 'Mock' }}</span>
       </div>
     </div>
-  </a>
-  {% else %}
-  <div class="card">Kayıtlı tesis yok.</div>
-  {% endfor %}
+  </div>
 </div>
 {% endblock %}

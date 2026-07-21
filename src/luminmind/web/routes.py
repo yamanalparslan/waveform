@@ -2,18 +2,22 @@
 
 Oturum: login formu JWT üretir ve HttpOnly çerezde taşır; sayfa bağımlılığı
 çerezi doğrular, geçersizse /ui/login'e yönlendirir. Grafikler sunucuda SVG
-olarak üretilir (charts.py) — tarayıcıda JS gerekmez. Saatler TRT gösterilir.
+olarak üretilir (charts.py). Saatler TRT gösterilir.
 """
 
+import csv
+import io
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,9 +25,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from luminmind.analytics.comparison import plant_actual_from_samples
 from luminmind.api.deps import get_session
 from luminmind.config import Settings
-from luminmind.core.models import AnomalyEvent, ArbitragePlan, BatterySystem, Plant, User
-from luminmind.core.security import TokenError, create_jwt, decode_jwt, verify_password
-from luminmind.web.charts import Series, line_chart, price_plan_chart
+from luminmind.core.models import (
+    AnomalyEvent,
+    ArbitragePlan,
+    BatterySystem,
+    Plant,
+    PvArray,
+    User,
+)
+from luminmind.core.security import (
+    TokenError,
+    create_jwt,
+    decode_jwt,
+    hash_password,
+    verify_password,
+)
+from luminmind.web.charts import Series, line_chart, price_plan_chart, sparkline
 
 router = APIRouter(prefix="/ui", tags=["web"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -34,6 +51,8 @@ _COOKIE = "lm_session"
 KIND_LABELS = {"microcrack": "Mikro çatlak", "shading": "Gölgelenme", "soiling": "Kirlilik"}
 SEVERITY_LABELS = {"warning": "Uyarı", "critical": "Kritik"}
 STATUS_LABELS = {"open": "Açık", "acked": "Onaylandı", "resolved": "Çözüldü"}
+STATUS_CHIP = {"open": "info", "acked": "muted", "resolved": "ok"}
+KIND_CHIP = {"microcrack": "crit", "shading": "warn", "soiling": "warn"}
 ACTION_LABELS = {"charge": "Şarj", "discharge": "Deşarj", "idle": "Beklemede"}
 
 
@@ -60,6 +79,12 @@ async def get_web_user(
     return user
 
 
+async def require_admin(user: Annotated[User, Depends(get_web_user)]) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+    return user
+
+
 def _trt_day_window(day: date) -> tuple[datetime, datetime]:
     start = datetime(day.year, day.month, day.day, tzinfo=TRT).astimezone(UTC)
     return start, start + timedelta(days=1)
@@ -72,6 +97,29 @@ def _parse_day(value: str | None, default: date) -> date:
         return date.fromisoformat(value)
     except ValueError:
         return default
+
+
+def _fmt_int(x: float | int) -> str:
+    return f"{int(round(x)):,}".replace(",", ".")
+
+
+def _fmt_1(x: float) -> str:
+    return f"{x:,.1f}".replace(",", ".")
+
+
+def _time_ago_tr(ts: datetime) -> str:
+    delta = datetime.now(tz=UTC) - ts
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return f"{seconds} sn önce"
+    if seconds < 3600:
+        return f"{seconds // 60} dk önce"
+    if seconds < 86400:
+        return f"{seconds // 3600} saat önce"
+    return f"{seconds // 86400} gün önce"
+
+
+# ------------------------------ Auth ------------------------------
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -119,6 +167,9 @@ async def logout() -> Response:
     return response
 
 
+# ------------------------------ Overview ------------------------------
+
+
 @router.get("", response_class=HTMLResponse)
 async def overview(
     request: Request,
@@ -126,37 +177,90 @@ async def overview(
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
     influx = request.app.state.influx
+    settings: Settings = request.app.state.settings
     now = datetime.now(tz=UTC)
     start, stop = _trt_day_window(now.astimezone(TRT).date())
 
     plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
-    count_rows = (
+    open_counts_rows = (
         await session.execute(
             select(AnomalyEvent.plant_id, func.count())
             .where(AnomalyEvent.status == "open")
             .group_by(AnomalyEvent.plant_id)
         )
     ).all()
-    open_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in count_rows}
+    open_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in open_counts_rows}
 
-    cards = []
+    total_power = 0.0
+    total_energy = 0.0
+    plants_producing = 0
+    cards: list[dict[str, Any]] = []
     for plant in plants:
-        last_power, today_energy = "—", "—"
+        last_power_val = 0.0
+        today_energy_val = 0.0
+        series: list[tuple[datetime, float]] = []
         if influx is not None:
             series = await influx.query_plant_series(
                 plant.vendor_plant_id, "ac_power_kw", start, min(stop, now), "15m"
             )
             if series:
-                last_power = f"{series[-1][1]:,.0f} kW"
-                today_energy = f"{sum(v for _, v in series) * 0.25:,.0f} kWh"
+                last_power_val = float(series[-1][1])
+                today_energy_val = sum(v for _, v in series) * 0.25
+        total_power += last_power_val
+        total_energy += today_energy_val
+        if last_power_val > 0.1:
+            plants_producing += 1
+        status_class = "ok" if last_power_val > 0.1 else "muted"
+        status_label = "Üretiyor" if last_power_val > 0.1 else "Bekliyor"
         cards.append(
             {
                 "plant": plant,
-                "last_power": last_power,
-                "today_energy": today_energy,
+                "last_power": (
+                    f"{_fmt_int(last_power_val)} kW" if influx is not None else "—"
+                ),
+                "today_energy": (
+                    f"{_fmt_int(today_energy_val)} kWh" if influx is not None else "—"
+                ),
                 "open_anomalies": open_counts.get(plant.id, 0),
+                "capacity_label": (
+                    f"{_fmt_1(plant.dc_capacity_kwp)} kWp"
+                    if plant.dc_capacity_kwp
+                    else "kapasite tanımsız"
+                ),
+                "status_class": status_class,
+                "status_label": status_label,
+                "sparkline_svg": sparkline(series, color="#f2b544"),
             }
         )
+
+    total_capacity_mwp = sum((p.dc_capacity_kwp or 0.0) for p in plants) / 1000.0
+    totals = {
+        "power_kw": _fmt_int(total_power) if influx is not None else "—",
+        "energy_kwh": _fmt_int(total_energy) if influx is not None else "—",
+        "plants_producing": plants_producing,
+        "capacity_mwp": _fmt_1(total_capacity_mwp),
+        "open_anomalies": sum(open_counts.values()),
+    }
+
+    # Son 5 olay
+    recent_events_rows = (
+        await session.scalars(
+            select(AnomalyEvent).order_by(AnomalyEvent.started_at.desc()).limit(5)
+        )
+    ).all()
+    plant_by_id = {p.id: p for p in plants}
+    recent_events = [
+        {
+            "kind_label": KIND_LABELS.get(e.kind, e.kind),
+            "chip_class": KIND_CHIP.get(e.kind, "muted"),
+            "plant_name": plant_by_id[e.plant_id].name if e.plant_id in plant_by_id else "—",
+            "time_ago": _time_ago_tr(e.started_at.astimezone(UTC)),
+            "summary": f"{SEVERITY_LABELS.get(e.severity, e.severity)} · "
+            f"{e.deviation_pct:.1f}% sapma · {STATUS_LABELS.get(e.status, e.status)}",
+        }
+        for e in recent_events_rows
+    ]
+
     return templates.TemplateResponse(
         request,
         "overview.html",
@@ -165,10 +269,17 @@ async def overview(
             "section": "overview",
             "plant": plants[0] if plants else None,
             "plants": cards,
+            "totals": totals,
+            "recent_events": recent_events,
             "influx_ok": influx is not None,
+            "mock_mode": settings.lm_use_mock_vendors,
             "today_label": now.astimezone(TRT).strftime("%d.%m.%Y"),
+            "page_title": "Genel Bakış",
         },
     )
+
+
+# ------------------------------ Map ------------------------------
 
 
 @router.get("/harita", response_class=HTMLResponse)
@@ -177,15 +288,9 @@ async def map_page(
     session: Annotated[AsyncSession, Depends(get_session)],
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
-    """Koordinatı tanımlı tüm sahaları Leaflet + OpenStreetMap üzerinde gösterir."""
     plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
     sites = [
-        {
-            "name": p.name,
-            "lat": p.latitude,
-            "lon": p.longitude,
-            "capacity": p.dc_capacity_kwp,
-        }
+        {"name": p.name, "lat": p.latitude, "lon": p.longitude, "capacity": p.dc_capacity_kwp}
         for p in plants
         if p.latitude is not None and p.longitude is not None
     ]
@@ -198,15 +303,28 @@ async def map_page(
             "plant": plants[0] if plants else None,
             "sites": sites,
             "sites_json": json.dumps(sites),
+            "page_title": "Saha Haritası",
         },
     )
+
+
+# ------------------------------ Plant detail ------------------------------
 
 
 async def _load_plant(session: AsyncSession, plant_id: uuid.UUID) -> Plant:
     plant = await session.get(Plant, plant_id)
     if plant is None:
-        raise RequiresLogin  # bilinmeyen tesis → ana sayfaya dönüş yerine login akışı
+        raise HTTPException(status_code=404, detail="plant not found")
     return plant
+
+
+async def _open_anomaly_count(session: AsyncSession, plant_id: uuid.UUID) -> int:
+    result = await session.execute(
+        select(func.count()).where(
+            AnomalyEvent.plant_id == plant_id, AnomalyEvent.status == "open"
+        )
+    )
+    return int(result.scalar() or 0)
 
 
 @router.get("/plants/{plant_id}", response_class=HTMLResponse)
@@ -215,13 +333,15 @@ async def plant_detail(
     plant_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
     user: Annotated[User, Depends(get_web_user)],
-    date_param: Annotated[str | None, None] = None,
 ) -> HTMLResponse:
     plant = await _load_plant(session, plant_id)
     day = _parse_day(request.query_params.get("date"), datetime.now(tz=TRT).date())
     start, stop = _trt_day_window(day)
 
     series: list[Series] = []
+    peak_kw = 0.0
+    energy_kwh = 0.0
+    expected_kwh = 0.0
     influx = request.app.state.influx
     if influx is not None:
         actual = plant_actual_from_samples(await influx.query_raw_window(start, stop)).get(
@@ -229,9 +349,23 @@ async def plant_detail(
         )
         expected = (await influx.query_twin_window(start, stop)).get(plant.vendor_plant_id, {})
         if actual:
-            series.append(Series("Gerçek", "#3fa9f5", sorted(actual.items())))
+            series.append(Series("Gerçek", "#f2b544", sorted(actual.items())))
+            peak_kw = max(actual.values())
+            energy_kwh = sum(actual.values()) * 0.25
         if expected:
-            series.append(Series("Beklenen", "#e3b341", sorted(expected.items())))
+            series.append(Series("Beklenen", "#5aa1e3", sorted(expected.items())))
+            expected_kwh = sum(expected.values()) * 0.25
+
+    pr = 0.0
+    if expected_kwh > 1.0:
+        pr = min(200.0, energy_kwh / expected_kwh * 100.0)
+    kpis = {
+        "peak_kw": _fmt_int(peak_kw) if peak_kw else "—",
+        "energy_kwh": _fmt_int(energy_kwh) if energy_kwh else "—",
+        "expected_kwh": _fmt_int(expected_kwh) if expected_kwh else "—",
+        "pr": _fmt_1(pr) if pr else "—",
+        "pr_ok": pr >= 85.0,
+    }
 
     return templates.TemplateResponse(
         request,
@@ -240,12 +374,18 @@ async def plant_detail(
             "user": user,
             "section": "plant",
             "plant": plant,
+            "plant_open_anomalies": await _open_anomaly_count(session, plant.id),
             "day_str": day.isoformat(),
+            "kpis": kpis,
             "production_chart": line_chart(series, TRT, unit="kW"),
             "inverters": await plant.awaitable_attrs.inverters,
             "batteries": await plant.awaitable_attrs.batteries,
+            "page_title": plant.name,
         },
     )
+
+
+# ------------------------------ Anomalies ------------------------------
 
 
 @router.get("/plants/{plant_id}/anomalies", response_class=HTMLResponse)
@@ -274,6 +414,11 @@ async def anomalies_page(
         }
         for e in events
     ]
+    stats = {
+        "open": sum(1 for e in events if e.status == "open"),
+        "acked": sum(1 for e in events if e.status == "acked"),
+        "resolved": sum(1 for e in events if e.status == "resolved"),
+    }
     return templates.TemplateResponse(
         request,
         "anomalies.html",
@@ -281,11 +426,15 @@ async def anomalies_page(
             "user": user,
             "section": "anomalies",
             "plant": plant,
+            "plant_open_anomalies": stats["open"],
             "events": rows,
+            "stats": stats,
             "kind_labels": KIND_LABELS,
             "severity_labels": SEVERITY_LABELS,
             "status_labels": STATUS_LABELS,
+            "status_chip": STATUS_CHIP,
             "back_url": f"/ui/plants/{plant.id}/anomalies",
+            "page_title": f"{plant.name} · Anomaliler",
         },
     )
 
@@ -302,9 +451,12 @@ async def anomaly_status(
         event = await session.get(AnomalyEvent, anomaly_id)
         if event is not None:
             event.status = status
-    if not back.startswith("/ui"):  # open-redirect koruması
+    if not back.startswith("/ui"):
         back = "/ui"
     return RedirectResponse(back, status_code=303)
+
+
+# ------------------------------ Arbitrage ------------------------------
 
 
 @router.get("/plants/{plant_id}/arbitrage", response_class=HTMLResponse)
@@ -333,7 +485,9 @@ async def arbitrage_page(
     slot_rows = []
     if plan is not None:
         for slot in await plan.awaitable_attrs.slots:
-            ts = slot.slot_start if slot.slot_start.tzinfo else slot.slot_start.replace(tzinfo=UTC)
+            ts = (
+                slot.slot_start if slot.slot_start.tzinfo else slot.slot_start.replace(tzinfo=UTC)
+            )
             prices.append((ts, slot.price_try_mwh))
             actions[ts] = (slot.action, slot.power_kw)
             slot_rows.append(
@@ -351,10 +505,451 @@ async def arbitrage_page(
             "user": user,
             "section": "arbitrage",
             "plant": plant,
+            "plant_open_anomalies": await _open_anomaly_count(session, plant.id),
             "day_str": day.isoformat(),
             "plan": plan,
             "slots": slot_rows,
             "chart": price_plan_chart(prices, actions, TRT),
             "action_labels": ACTION_LABELS,
+            "page_title": f"{plant.name} · Arbitraj",
         },
+    )
+
+
+# ------------------------------ Reports ------------------------------
+
+
+async def _load_daily_report(
+    influx: Any,
+    plants: "Sequence[Plant]",
+    start: datetime,
+    stop: datetime,
+) -> list[dict[str, Any]]:
+    """`lm_daily` bucket'ından günlük agregatları okur; boşsa lm_raw'dan türetir."""
+    rows: list[dict[str, Any]] = []
+    if influx is None:
+        return rows
+    current = start
+    while current < stop:
+        day_end = current + timedelta(days=1)
+        raw = plant_actual_from_samples(
+            await influx.query_raw_window(current, day_end)
+        )
+        expected = await influx.query_twin_window(current, day_end)
+        for p in plants:
+            actual = raw.get(p.vendor_plant_id, {})
+            exp = expected.get(p.vendor_plant_id, {})
+            if not actual and not exp:
+                continue
+            energy = sum(actual.values()) * 0.25
+            expected_kwh = sum(exp.values()) * 0.25
+            peak = max(actual.values()) if actual else 0.0
+            pr = (
+                min(200.0, energy / expected_kwh * 100.0)
+                if expected_kwh > 1.0
+                else 0.0
+            )
+            rows.append(
+                {
+                    "date_obj": current.date(),
+                    "plant_id": p.id,
+                    "plant_name": p.name,
+                    "energy_kwh": energy,
+                    "expected_kwh": expected_kwh,
+                    "peak_kw": peak,
+                    "pr": pr,
+                }
+            )
+        current = day_end
+    return rows
+
+
+@router.get("/raporlar", response_class=HTMLResponse)
+async def reports_page(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_web_user)],
+) -> HTMLResponse:
+    influx = request.app.state.influx
+    days_param = request.query_params.get("days", "7")
+    days = int(days_param) if days_param.isdigit() and int(days_param) in {7, 14, 30, 60} else 7
+
+    now = datetime.now(tz=UTC)
+    end_day = now.astimezone(TRT).date()
+    start_day = end_day - timedelta(days=days - 1)
+    start_utc = datetime(start_day.year, start_day.month, start_day.day, tzinfo=TRT).astimezone(UTC)
+    stop_utc = (
+        datetime(end_day.year, end_day.month, end_day.day, tzinfo=TRT) + timedelta(days=1)
+    ).astimezone(UTC)
+
+    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    rows = await _load_daily_report(influx, plants, start_utc, stop_utc)
+
+    # KPI özet
+    total_energy = sum(r["energy_kwh"] for r in rows)
+    total_peak = max((r["peak_kw"] for r in rows), default=0.0)
+    prs = [r["pr"] for r in rows if r["pr"] > 0]
+    avg_pr = sum(prs) / len(prs) if prs else 0.0
+
+    anomalies_new = int(
+        (
+            await session.execute(
+                select(func.count()).where(AnomalyEvent.started_at >= start_utc)
+            )
+        ).scalar()
+        or 0
+    )
+
+    # Enerji eğrisi (portföy toplamı, günlük)
+    daily_totals: dict[date, float] = {}
+    for r in rows:
+        daily_totals[r["date_obj"]] = daily_totals.get(r["date_obj"], 0.0) + r["energy_kwh"]
+    energy_points = [
+        (datetime(d.year, d.month, d.day, tzinfo=TRT), v)
+        for d, v in sorted(daily_totals.items())
+    ]
+    energy_chart = line_chart(
+        [Series("Portföy enerjisi", "#f2b544", energy_points)],
+        TRT,
+        unit="kWh",
+    )
+
+    def _pr_color(pr: float) -> str:
+        if pr <= 0:
+            return "var(--text-faint)"
+        if pr >= 90:
+            return "var(--teal)"
+        if pr >= 75:
+            return "var(--amber)"
+        return "var(--coral)"
+
+    daily_rows_view = [
+        {
+            "date": r["date_obj"].strftime("%d.%m.%Y"),
+            "plant": r["plant_name"],
+            "energy": _fmt_int(r["energy_kwh"]),
+            "expected": _fmt_int(r["expected_kwh"]) if r["expected_kwh"] else "—",
+            "pr": f"{r['pr']:.1f}%" if r["pr"] else "—",
+            "pr_color": _pr_color(r["pr"]),
+            "peak": _fmt_int(r["peak_kw"]),
+        }
+        for r in sorted(rows, key=lambda x: (x["date_obj"], x["plant_name"]), reverse=True)
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "reports.html",
+        {
+            "user": user,
+            "section": "reports",
+            "plant": plants[0] if plants else None,
+            "days": days,
+            "range_start": start_day.strftime("%d.%m.%Y"),
+            "range_end": end_day.strftime("%d.%m.%Y"),
+            "summary": {
+                "energy_kwh": _fmt_int(total_energy),
+                "avg_pr": _fmt_1(avg_pr) if avg_pr else "—",
+                "peak_kw": _fmt_int(total_peak) if total_peak else "—",
+                "anomalies_new": anomalies_new,
+            },
+            "energy_chart": energy_chart,
+            "daily_rows": daily_rows_view,
+            "page_title": "Raporlar",
+        },
+    )
+
+
+@router.get("/raporlar/indir")
+async def report_download(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_web_user)],
+) -> StreamingResponse:
+    influx = request.app.state.influx
+    days_param = request.query_params.get("days", "7")
+    days = int(days_param) if days_param.isdigit() and int(days_param) in {7, 14, 30, 60} else 7
+    now = datetime.now(tz=UTC)
+    end_day = now.astimezone(TRT).date()
+    start_day = end_day - timedelta(days=days - 1)
+    start_utc = datetime(start_day.year, start_day.month, start_day.day, tzinfo=TRT).astimezone(UTC)
+    stop_utc = (
+        datetime(end_day.year, end_day.month, end_day.day, tzinfo=TRT) + timedelta(days=1)
+    ).astimezone(UTC)
+
+    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    rows = await _load_daily_report(influx, plants, start_utc, stop_utc)
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["tarih", "tesis", "enerji_kwh", "beklenen_kwh", "performans_orani",
+                     "tepe_guc_kw"])
+    for r in sorted(rows, key=lambda x: (x["date_obj"], x["plant_name"])):
+        writer.writerow([
+            r["date_obj"].isoformat(),
+            r["plant_name"],
+            f"{r['energy_kwh']:.2f}",
+            f"{r['expected_kwh']:.2f}",
+            f"{r['pr']:.2f}",
+            f"{r['peak_kw']:.2f}",
+        ])
+    buffer.seek(0)
+    filename = f"luminmind-rapor-{start_day.isoformat()}-{end_day.isoformat()}.csv"
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ------------------------------ Plant management ------------------------------
+
+
+def _plant_form_defaults(plant: Plant | None = None) -> dict[str, Any]:
+    if plant is None:
+        return {
+            "name": "", "vendor": "huawei", "vendor_plant_id": "",
+            "latitude": "", "longitude": "",
+            "dc_capacity_kwp": "", "ac_capacity_kw": "", "timezone": "Europe/Istanbul",
+        }
+    return {
+        "name": plant.name,
+        "vendor": plant.vendor,
+        "vendor_plant_id": plant.vendor_plant_id,
+        "latitude": plant.latitude or "",
+        "longitude": plant.longitude or "",
+        "dc_capacity_kwp": plant.dc_capacity_kwp or "",
+        "ac_capacity_kw": plant.ac_capacity_kw or "",
+        "timezone": plant.timezone,
+    }
+
+
+def _opt_float(value: str | None) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+@router.get("/tesisler/yeni", response_class=HTMLResponse)
+async def plant_new_page(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+) -> HTMLResponse:
+    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    return templates.TemplateResponse(
+        request,
+        "plant_form.html",
+        {
+            "user": user,
+            "section": "plant-new",
+            "plant": plants[0] if plants else None,
+            "editing": False,
+            "form": _plant_form_defaults(),
+            "post_url": "/ui/tesisler/yeni",
+            "error": None, "success": None,
+            "page_title": "Yeni tesis",
+        },
+    )
+
+
+@router.post("/tesisler/yeni")
+async def plant_new_submit(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+    name: Annotated[str, Form()],
+    vendor: Annotated[str, Form()],
+    vendor_plant_id: Annotated[str, Form()],
+    latitude: Annotated[str, Form()] = "",
+    longitude: Annotated[str, Form()] = "",
+    dc_capacity_kwp: Annotated[str, Form()] = "",
+    ac_capacity_kw: Annotated[str, Form()] = "",
+    timezone: Annotated[str, Form()] = "Europe/Istanbul",
+    tilt_deg: Annotated[str, Form()] = "",
+    azimuth_deg: Annotated[str, Form()] = "",
+    modules_per_string: Annotated[str, Form()] = "",
+    strings: Annotated[str, Form()] = "",
+) -> Response:
+    existing = (
+        await session.scalars(
+            select(Plant).where(
+                Plant.vendor == vendor, Plant.vendor_plant_id == vendor_plant_id
+            )
+        )
+    ).one_or_none()
+    if existing is not None:
+        plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+        return templates.TemplateResponse(
+            request,
+            "plant_form.html",
+            {
+                "user": user,
+                "section": "plant-new",
+                "plant": plants[0] if plants else None,
+                "editing": False,
+                "form": _plant_form_defaults(),
+                "post_url": "/ui/tesisler/yeni",
+                "error": "Bu üretici + üretici kimliği zaten kayıtlı.",
+                "success": None,
+                "page_title": "Yeni tesis",
+            },
+            status_code=409,
+        )
+    plant = Plant(
+        owner_id=user.id,
+        name=name,
+        vendor=vendor,
+        vendor_plant_id=vendor_plant_id,
+        latitude=_opt_float(latitude),
+        longitude=_opt_float(longitude),
+        dc_capacity_kwp=_opt_float(dc_capacity_kwp),
+        ac_capacity_kw=_opt_float(ac_capacity_kw),
+        timezone=timezone or "Europe/Istanbul",
+    )
+    session.add(plant)
+    await session.flush()
+    # opsiyonel PV dizisi
+    tilt = _opt_float(tilt_deg)
+    az = _opt_float(azimuth_deg)
+    mps = _opt_float(modules_per_string)
+    strs = _opt_float(strings)
+    if all(x is not None for x in (tilt, az, mps, strs)):
+        session.add(
+            PvArray(
+                plant_id=plant.id,
+                tilt_deg=tilt or 0.0,
+                azimuth_deg=az or 0.0,
+                modules_per_string=int(mps or 0),
+                strings=int(strs or 0),
+                module_params={"pdc0": 550.0, "gamma_pdc": -0.0035},
+            )
+        )
+    return RedirectResponse(f"/ui/plants/{plant.id}", status_code=303)
+
+
+@router.get("/tesisler/{plant_id}/duzenle", response_class=HTMLResponse)
+async def plant_edit_page(
+    request: Request,
+    plant_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+) -> HTMLResponse:
+    plant = await _load_plant(session, plant_id)
+    return templates.TemplateResponse(
+        request,
+        "plant_form.html",
+        {
+            "user": user,
+            "section": "plant",
+            "plant": plant,
+            "editing": True,
+            "form": _plant_form_defaults(plant),
+            "post_url": f"/ui/tesisler/{plant.id}/duzenle",
+            "error": None, "success": None,
+            "page_title": f"{plant.name} · düzenle",
+        },
+    )
+
+
+@router.post("/tesisler/{plant_id}/duzenle")
+async def plant_edit_submit(
+    request: Request,
+    plant_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+    name: Annotated[str, Form()],
+    vendor: Annotated[str, Form()],
+    vendor_plant_id: Annotated[str, Form()],
+    latitude: Annotated[str, Form()] = "",
+    longitude: Annotated[str, Form()] = "",
+    dc_capacity_kwp: Annotated[str, Form()] = "",
+    ac_capacity_kw: Annotated[str, Form()] = "",
+    timezone: Annotated[str, Form()] = "Europe/Istanbul",
+) -> Response:
+    plant = await _load_plant(session, plant_id)
+    plant.name = name
+    plant.vendor = vendor
+    plant.vendor_plant_id = vendor_plant_id
+    plant.latitude = _opt_float(latitude)
+    plant.longitude = _opt_float(longitude)
+    plant.dc_capacity_kwp = _opt_float(dc_capacity_kwp)
+    plant.ac_capacity_kw = _opt_float(ac_capacity_kw)
+    plant.timezone = timezone or "Europe/Istanbul"
+    return RedirectResponse(f"/ui/plants/{plant.id}", status_code=303)
+
+
+# ------------------------------ User management ------------------------------
+
+
+@router.get("/kullanicilar", response_class=HTMLResponse)
+async def users_page(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+    error: str | None = None,
+    success: str | None = None,
+) -> HTMLResponse:
+    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    users = (await session.scalars(select(User).order_by(User.email))).all()
+    users_view = [
+        {
+            "id": u.id,
+            "email": u.email,
+            "role": u.role,
+            "created_at": u.created_at.strftime("%d.%m.%Y") if u.created_at else "—",
+        }
+        for u in users
+    ]
+    return templates.TemplateResponse(
+        request,
+        "users.html",
+        {
+            "user": user,
+            "section": "users",
+            "plant": plants[0] if plants else None,
+            "users": users_view,
+            "error": error, "success": success,
+            "page_title": "Kullanıcılar",
+        },
+    )
+
+
+@router.post("/kullanicilar/yeni")
+async def user_new_submit(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+    email: Annotated[str, Form()],
+    password: Annotated[str, Form()],
+    role: Annotated[str, Form()] = "viewer",
+) -> Response:
+    if role not in {"admin", "viewer"}:
+        role = "viewer"
+    exists = (await session.scalars(select(User).where(User.email == email))).one_or_none()
+    if exists is not None:
+        return RedirectResponse(
+            "/ui/kullanicilar?error=" + quote("Bu e-posta zaten kayıtlı"), status_code=303
+        )
+    session.add(User(email=email, hashed_password=hash_password(password), role=role))
+    return RedirectResponse(
+        "/ui/kullanicilar?success=" + quote("Kullanıcı oluşturuldu"), status_code=303
+    )
+
+
+@router.post("/kullanicilar/{user_id}/rol")
+async def user_role_submit(
+    user_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+    role: Annotated[str, Form()],
+) -> Response:
+    if role not in {"admin", "viewer"} or user_id == user.id:
+        return RedirectResponse("/ui/kullanicilar", status_code=303)
+    target = await session.get(User, user_id)
+    if target is not None:
+        target.role = role
+    return RedirectResponse(
+        "/ui/kullanicilar?success=" + quote("Rol güncellendi"), status_code=303
     )

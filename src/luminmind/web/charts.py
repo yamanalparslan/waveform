@@ -41,6 +41,52 @@ def _scale(
     return range_min + ratio * (range_max - range_min)
 
 
+def sparkline(
+    points: list[tuple[datetime, float]],
+    color: str = "#f2b544",
+    width: int = 220,
+    height: int = 44,
+) -> str:
+    """Kart içi mini eğri — eksen/etiket yok, sadece dolgulu çizgi."""
+    if not points:
+        return (
+            f'<svg viewBox="0 0 {width} {height}" class="spark" preserveAspectRatio="none">'
+            f'<text x="{width / 2}" y="{height / 2 + 4}" text-anchor="middle" '
+            f'style="fill:#6a778a;font-size:11px">veri bekleniyor</text></svg>'
+        )
+    pts = sorted(points)
+    v_min = min(v for _, v in pts)
+    v_max = max(v for _, v in pts)
+    v_min = min(v_min, 0.0)
+    if v_max == v_min:
+        v_max = v_min + 1.0
+    x_min = pts[0][0].timestamp()
+    x_max = pts[-1][0].timestamp()
+    if x_max == x_min:
+        x_max = x_min + 1
+
+    def sx(t: float) -> float:
+        return (t - x_min) / (x_max - x_min) * width
+
+    def sy(v: float) -> float:
+        return height - (v - v_min) / (v_max - v_min) * (height - 4) - 2
+
+    coords = " ".join(f"{sx(t.timestamp()):.1f},{sy(v):.1f}" for t, v in pts)
+    area = (
+        f"{sx(x_min):.1f},{height} "
+        + coords
+        + f" {sx(x_max):.1f},{height}"
+    )
+    return (
+        f'<svg viewBox="0 0 {width} {height}" class="spark" preserveAspectRatio="none" '
+        f'role="img">'
+        f'<polygon points="{area}" fill="{color}" opacity="0.15"/>'
+        f'<polyline points="{coords}" fill="none" stroke="{color}" '
+        f'stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
+        f"</svg>"
+    )
+
+
 def line_chart(
     series: list[Series],
     zone: tzinfo,

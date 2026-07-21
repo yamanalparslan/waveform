@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Kullanıcılar{% endblock %}
+{% block crumbs %}<b>Kullanıcılar</b>{% endblock %}
+{% block content %}
+<h1>Kullanıcı yönetimi</h1>
+<p class="sub">Admin ve görüntüleyici rolündeki hesaplar</p>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if success %}<div class="success">{{ success }}</div>{% endif %}
+
+<div class="split-2">
+  <div>
+    <h2>Kayıtlı kullanıcılar</h2>
+    <div class="card">
+      <table>
+        <tr><th>E-posta</th><th>Rol</th><th>Oluşturuldu</th><th>İşlem</th></tr>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.email }}</td>
+          <td>
+            <span class="chip {{ 'violet' if u.role == 'admin' else 'muted' }}">{{ u.role }}</span>
+          </td>
+          <td class="num">{{ u.created_at }}</td>
+          <td>
+            {% if u.id != user.id %}
+            <form class="inline" method="post" action="/ui/kullanicilar/{{ u.id }}/rol">
+              <input type="hidden" name="role" value="{{ 'viewer' if u.role == 'admin' else 'admin' }}">
+              <button>{{ 'Görüntüleyici yap' if u.role == 'admin' else 'Admin yap' }}</button>
+            </form>
+            {% else %}
+            <span class="chip plain">Bu sen</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+  <div>
+    <h2>Yeni kullanıcı</h2>
+    <div class="card pad">
+      <form method="post" action="/ui/kullanicilar/yeni">
+        <label>E-posta</label>
+        <input name="email" required placeholder="ad@luminmind.local">
+        <label>Şifre</label>
+        <input name="password" type="password" required minlength="4">
+        <label>Rol</label>
+        <select name="role">
+          <option value="viewer">Görüntüleyici</option>
+          <option value="admin">Admin</option>
+        </select>
+        <div style="margin-top:18px">
+          <button class="primary" style="width:100%; justify-content:center">
+            Kullanıcı oluştur</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

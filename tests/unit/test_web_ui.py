@@ -11,7 +11,7 @@ from luminmind.api.main import create_app
 from luminmind.config import Settings
 from luminmind.core.aggregate import RawSample
 from luminmind.core.db import session_scope
-from luminmind.core.models import AnomalyEvent, Base, Plant
+from luminmind.core.models import AnomalyEvent, Base, Plant, User
 from luminmind.scripts.seed import seed
 from luminmind.web.charts import Series, line_chart, price_plan_chart
 from luminmind.workers.tasks.arbitrage import run_arbitrage
@@ -55,10 +55,9 @@ async def client(engine):
             yield c
 
 
-async def do_login(client) -> None:
+async def do_login(client, email: str = "admin@luminmind.local", password: str = "admin") -> None:
     response = await client.post(
-        "/ui/login",
-        data={"email": "admin@luminmind.local", "password": "admin"},
+        "/ui/login", data={"email": email, "password": password}
     )
     assert response.status_code == 303
     assert "lm_session" in response.cookies
@@ -95,9 +94,10 @@ async def test_overview_shows_plant_card(client):
     response = await client.get("/ui")
     assert response.status_code == 200
     assert "Konya GES" in response.text
-    assert "Anlık güç" in response.text
+    assert "Anlık toplam güç" in response.text
     assert "520" in response.text  # son ölçüm
     assert "Açık anomali" in response.text
+    assert "Son Olaylar" in response.text  # yeni panel
 
 
 async def test_plant_detail_renders_svg_chart(client, engine):
@@ -151,7 +151,7 @@ async def test_arbitrage_page_shows_plan_and_revenue(client, engine):
         f"/ui/plants/{plant.id}/arbitrage?date={plan_day.isoformat()}"
     )
     assert response.status_code == 200
-    assert "Beklenen gelir" in response.text
+    assert "Beklenen günlük gelir" in response.text
     assert "Şarj" in response.text and "Deşarj" in response.text
     assert "<svg" in response.text
 
@@ -167,6 +167,134 @@ async def test_map_page_embeds_sites_and_leaflet(client):
     assert "37.87" in response.text and "32.48" in response.text
     assert "Konya GES" in response.text
     assert 'id="map"' in response.text
+
+
+async def test_reports_page_renders(client):
+    await do_login(client)
+    response = await client.get("/ui/raporlar?days=7")
+    assert response.status_code == 200
+    assert "Portföy" in response.text
+    assert "Toplam üretim" in response.text
+    assert "Ortalama PR" in response.text
+    assert "CSV indir" in response.text
+
+
+async def test_reports_csv_download(client):
+    await do_login(client)
+    response = await client.get("/ui/raporlar/indir?days=7")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    # başlık satırı
+    assert "tarih,tesis,enerji_kwh" in response.text
+
+
+async def test_plant_new_form_admin_only(client, engine):
+    from luminmind.core.security import hash_password as _hash
+
+    async with session_scope(engine) as session:
+        session.add(User(
+            email="viewer@luminmind.local",
+            hashed_password=_hash("v"),
+            role="viewer",
+        ))
+    await do_login(client, email="viewer@luminmind.local", password="v")
+    forbidden = await client.get("/ui/tesisler/yeni")
+    assert forbidden.status_code == 403
+
+    await do_login(client)  # admin olarak yeniden gir
+    page = await client.get("/ui/tesisler/yeni")
+    assert page.status_code == 200
+    assert "Yeni tesis" in page.text
+    assert "Haritaya tıklayarak" in page.text
+
+
+async def test_plant_new_creates_and_redirects(client, engine):
+    await do_login(client)
+    response = await client.post("/ui/tesisler/yeni", data={
+        "name": "İzmir GES 2",
+        "vendor": "huawei",
+        "vendor_plant_id": "NE=99",
+        "latitude": "38.4",
+        "longitude": "27.1",
+        "dc_capacity_kwp": "500",
+        "ac_capacity_kw": "500",
+        "timezone": "Europe/Istanbul",
+    })
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/ui/plants/")
+
+    from sqlalchemy import select as _sel
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(_sel(Plant).where(Plant.name == "İzmir GES 2"))).one()
+        assert plant.dc_capacity_kwp == 500.0
+
+
+async def test_plant_new_rejects_duplicate(client, engine):
+    await do_login(client)
+    # Konya GES mock-plant-1 zaten seed'de var, aynı vendor+id çakışır
+    response = await client.post("/ui/tesisler/yeni", data={
+        "name": "Kopya",
+        "vendor": "mock",
+        "vendor_plant_id": "mock-plant-1",
+    })
+    assert response.status_code == 409
+    assert "zaten kayıtlı" in response.text
+
+
+async def test_plant_edit_updates(client, engine):
+    await do_login(client)
+    from sqlalchemy import select as _sel
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(_sel(Plant))).one()
+        pid = plant.id
+
+    response = await client.post(f"/ui/tesisler/{pid}/duzenle", data={
+        "name": "Konya GES (yeni)",
+        "vendor": "mock",
+        "vendor_plant_id": "mock-plant-1",
+        "latitude": "37.87",
+        "longitude": "32.48",
+        "dc_capacity_kwp": "1000",
+        "ac_capacity_kw": "1000",
+        "timezone": "Europe/Istanbul",
+    })
+    assert response.status_code == 303
+
+    async with session_scope(engine) as session:
+        plant = await session.get(Plant, pid)
+        assert plant.name == "Konya GES (yeni)"
+
+
+async def test_users_page_admin_can_create(client, engine):
+    await do_login(client)
+    create = await client.post(
+        "/ui/kullanicilar/yeni",
+        data={"email": "yeni@luminmind.local", "password": "test123", "role": "viewer"},
+    )
+    assert create.status_code == 303
+
+    # Success mesajı ?success= query üzerinden geliyor; redirect'i elle takip et
+    success_url = create.headers["location"]
+    page = await client.get(success_url)
+    assert page.status_code == 200
+    assert "yeni@luminmind.local" in page.text
+    assert "Kullanıcı oluşturuldu" in page.text
+
+    from sqlalchemy import select as _sel
+    async with session_scope(engine) as session:
+        u = (
+            await session.scalars(_sel(User).where(User.email == "yeni@luminmind.local"))
+        ).one()
+        assert u.role == "viewer"
+
+
+async def test_map_uses_new_amber_marker(client):
+    await do_login(client)
+    response = await client.get("/ui/harita")
+    assert response.status_code == 200
+    assert "leaflet" in response.text.lower()
+    assert "#f2b544" in response.text  # yeni amber palet
 
 
 async def test_logout_clears_session(client):

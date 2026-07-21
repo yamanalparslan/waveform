@@ -1,20 +1,41 @@
 {% extends "base.html" %}
 {% block title %}Anomaliler · {{ plant.name }}{% endblock %}
+{% block crumbs %}<a href="/ui">Genel Bakış</a> ·
+  <a href="/ui/plants/{{ plant.id }}">{{ plant.name }}</a> · <b>Anomaliler</b>{% endblock %}
 {% block content %}
-<h1>Anomaliler — {{ plant.name }}</h1>
-<p class="sub">Dijital ikiz karşılaştırmasından türetilen şüpheli durumlar</p>
+<h1>Anomaliler</h1>
+<p class="sub">{{ plant.name }} · dijital ikiz karşılaştırmasından türetilen şüpheli olaylar</p>
 
-<div class="card" style="padding:0">
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+  <div class="kpi {{ 'accent-coral' if stats.open else 'accent-teal' }}">
+    <div class="label">Açık</div>
+    <div class="value">{{ stats.open }}</div>
+  </div>
+  <div class="kpi accent-blue">
+    <div class="label">Onaylandı</div>
+    <div class="value">{{ stats.acked }}</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Çözüldü</div>
+    <div class="value">{{ stats.resolved }}</div>
+  </div>
+</div>
+
+<h2>Kayıtlar</h2>
+<div class="card">
 <table>
   <tr><th>Tür</th><th>Şiddet</th><th>Sapma</th><th>Başlangıç (TRT)</th>
       <th>Durum</th><th>İşlem</th></tr>
   {% for event in events %}
   <tr>
     <td>{{ kind_labels.get(event.kind, event.kind) }}</td>
-    <td><span class="badge {{ event.severity }}">{{ severity_labels.get(event.severity, event.severity) }}</span></td>
-    <td>{{ "%.1f" | format(event.deviation_pct) }}%</td>
-    <td>{{ event.started_local }}</td>
-    <td><span class="badge {{ event.status }}">{{ status_labels.get(event.status, event.status) }}</span></td>
+    <td><span class="chip {{ 'crit' if event.severity == 'critical' else 'warn' }}">
+      {{ severity_labels.get(event.severity, event.severity) }}</span></td>
+    <td class="num" style="color:{{ 'var(--coral)' if event.deviation_pct < -10 else 'var(--amber)' }}">
+      {{ "%.1f"|format(event.deviation_pct) }}%</td>
+    <td class="num">{{ event.started_local }}</td>
+    <td><span class="chip {{ status_chip.get(event.status, 'muted') }}">
+      {{ status_labels.get(event.status, event.status) }}</span></td>
     <td>
       {% if event.status == "open" %}
       <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status">
@@ -27,14 +48,20 @@
       <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status">
         <input type="hidden" name="status" value="resolved">
         <input type="hidden" name="back" value="{{ back_url }}">
-        <button>Çözüldü</button>
+        <button>Çöz</button>
       </form>
       {% endif %}
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="6" style="color:var(--muted)">Kayıtlı anomali yok — tesis sağlıklı görünüyor. 🎉</td></tr>
+  <tr><td colspan="6">
+    <div class="note" style="padding:24px 0; text-align:center; margin:0">
+      Kayıtlı anomali yok — tesis sağlıklı görünüyor
+    </div>
+  </td></tr>
   {% endfor %}
 </table>
 </div>
+<p class="note">Sınıflandırma kural tabanlı + istatistiksel (medyan/MAD) olduğundan
+sonuçlar "şüphe" seviyesindedir; etiketli saha verisiyle doğruluk artacaktır.</p>
 {% endblock %}
