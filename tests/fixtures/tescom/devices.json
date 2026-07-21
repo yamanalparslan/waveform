@@ -1,0 +1,24 @@
+[
+  {
+    "slave_id": 1,
+    "son_zaman": "2026-07-21 10:39:27.661885",
+    "zaman": "2026-07-21 10:39:27.661885",
+    "guc": 124.73,
+    "voltaj": 801.9,
+    "akim": 90.33,
+    "sicaklik": 52.6,
+    "hata_kodu": 0,
+    "durum": "AKTIF"
+  },
+  {
+    "slave_id": 2,
+    "son_zaman": "2026-07-21 10:39:27.661885",
+    "zaman": "2026-07-21 10:39:27.661885",
+    "guc": 118.4,
+    "voltaj": 796.2,
+    "akim": 86.1,
+    "sicaklik": 50.9,
+    "hata_kodu": 0,
+    "durum": "AKTIF"
+  }
+]

@@ -64,6 +64,21 @@ def build_adapters(settings: Settings) -> list[VendorAdapter]:
                 client_secret=settings.sma_client_secret,
             )
         )
+    if settings.tescom_base_url:
+        from luminmind.adapters import TescomAdapter
+
+        adapters.append(
+            TescomAdapter(
+                base_url=settings.tescom_base_url,
+                api_key=settings.tescom_api_key,
+                plant_id=settings.tescom_plant_id,
+                plant_name=settings.tescom_plant_name,
+                latitude=settings.tescom_latitude,
+                longitude=settings.tescom_longitude,
+                dc_capacity_kwp=settings.tescom_dc_capacity_kwp or None,
+                timezone=settings.tescom_timezone,
+            )
+        )
     return adapters
 
 

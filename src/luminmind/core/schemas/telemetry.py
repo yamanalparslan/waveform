@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 class Vendor(StrEnum):
     HUAWEI = "huawei"
     SMA = "sma"
+    TESCOM = "tescom"
     MOCK = "mock"
 
 

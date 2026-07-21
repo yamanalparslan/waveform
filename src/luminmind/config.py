@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     sma_client_id: str = ""
     sma_client_secret: str = ""
 
+    # Tescom UPS inverter API (İzmir fabrikası — gerçek PV verisi)
+    tescom_base_url: str = ""
+    tescom_api_key: str = ""
+    tescom_plant_id: str = "tescom-izmir"
+    tescom_plant_name: str = "Tescom İzmir GES"
+    tescom_latitude: float = 38.42
+    tescom_longitude: float = 27.14
+    tescom_dc_capacity_kwp: float = 0.0  # 0 → dijital ikiz kapasiteyi cihaz sayısından türetir
+    tescom_timezone: str = "Europe/Istanbul"
+
     # EPİAŞ Şeffaflık — servis hesabı gelene kadar mock fiyatlar kullanılır
     lm_use_mock_prices: bool = True
     epias_base_url: str = ""

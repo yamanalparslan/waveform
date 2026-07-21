@@ -44,6 +44,41 @@ async def seed(session: AsyncSession) -> None:
         session.add(admin)
         logger.info("created admin user %s", admin.email)
 
+    await _seed_mock_plant(session, admin)
+    await _seed_tescom_plant(session, admin)
+
+
+async def _seed_tescom_plant(session: AsyncSession, admin: User) -> None:
+    """Tescom API yapılandırılmışsa İzmir tesisini Postgres'e ekler (idempotent).
+
+    Böylece gerçek üretim verisi arayüzde/haritada görünür ve (kapasite girildiyse)
+    dijital ikiz beklenen üretimi hesaplar. Depolama (BESS) tanımlanmaz — PV izleme.
+    """
+    settings = get_settings()
+    if not settings.tescom_base_url:
+        return
+    existing = (
+        await session.scalars(
+            select(Plant).where(Plant.vendor_plant_id == settings.tescom_plant_id)
+        )
+    ).one_or_none()
+    if existing is not None:
+        return
+    plant = Plant(
+        owner=admin,
+        name=settings.tescom_plant_name,
+        vendor=Vendor.TESCOM.value,
+        vendor_plant_id=settings.tescom_plant_id,
+        latitude=settings.tescom_latitude,
+        longitude=settings.tescom_longitude,
+        dc_capacity_kwp=settings.tescom_dc_capacity_kwp or None,
+        ac_capacity_kw=settings.tescom_dc_capacity_kwp or None,
+    )
+    session.add(plant)
+    logger.info("created Tescom plant %s", settings.tescom_plant_id)
+
+
+async def _seed_mock_plant(session: AsyncSession, admin: User) -> None:
     plant = (
         await session.scalars(select(Plant).where(Plant.vendor_plant_id == _MOCK_PLANT_ID))
     ).one_or_none()

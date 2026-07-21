@@ -2,6 +2,7 @@ from luminmind.adapters.base import AdapterAuthError, AdapterError, VendorAdapte
 from luminmind.adapters.huawei import HuaweiAdapter
 from luminmind.adapters.mock import MockAdapter
 from luminmind.adapters.sma import SmaAdapter
+from luminmind.adapters.tescom import TescomAdapter
 
 __all__ = [
     "AdapterAuthError",
@@ -9,5 +10,6 @@ __all__ = [
     "HuaweiAdapter",
     "MockAdapter",
     "SmaAdapter",
+    "TescomAdapter",
     "VendorAdapter",
 ]

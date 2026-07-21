@@ -8,10 +8,12 @@ Birim dönüşümleri:
 - SMA ennexOS: güçler W, enerji Wh → kW/kWh'e çevrilir.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from typing import Any
 
 from luminmind.core.schemas import TelemetryPoint, Vendor
+
+_TESCOM_TS_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S")
 
 
 def _as_float(value: Any) -> float | None:
@@ -61,6 +63,56 @@ def normalize_huawei_dev_kpi(
                 dc_current_a=_as_float(data.get("pv1_i")),
                 energy_total_kwh=_as_float(data.get("total_cap")),
                 temp_c=_as_float(data.get("temperature")),
+            )
+        )
+    return points
+
+
+def _parse_tescom_ts(value: str, tz: tzinfo) -> datetime | None:
+    """Tescom yerel zaman damgasını (tz'siz) verilen zaman dilimiyle işaretler."""
+    for fmt in _TESCOM_TS_FORMATS:
+        try:
+            return datetime.strptime(value, fmt).replace(tzinfo=tz)
+        except ValueError:
+            continue
+    return None
+
+
+def normalize_tescom_devices(
+    vendor_plant_id: str, payload: list[dict[str, Any]], tz: tzinfo
+) -> list[TelemetryPoint]:
+    """Tescom `/api/v1/devices` yanıtını kanonik modele dönüştürür.
+
+    Beklenen yapı (cihaz listesi)::
+
+        [{"slave_id": 1, "zaman": "2026-07-21 10:39:27.661885",
+          "guc": 124.73,      # AC güç, kW
+          "voltaj": 801.9,    # DC gerilim, V
+          "akim": 90.33,      # DC akım, A
+          "sicaklik": 52.6,   # °C
+          "hata_kodu": 0, "durum": "AKTIF"}]
+
+    Zaman damgası tz'siz yerel (fabrika saati) gelir; `tz` ile işaretlenip
+    `TelemetryPoint` içinde UTC'ye çevrilir.
+    """
+    points: list[TelemetryPoint] = []
+    for item in payload:
+        raw_ts = item.get("zaman") or item.get("son_zaman")
+        if not isinstance(raw_ts, str):
+            continue
+        ts = _parse_tescom_ts(raw_ts, tz)
+        if ts is None:
+            continue
+        points.append(
+            TelemetryPoint(
+                vendor=Vendor.TESCOM,
+                vendor_plant_id=vendor_plant_id,
+                vendor_device_id=str(item["slave_id"]),
+                ts=ts,
+                ac_power_kw=_as_float(item.get("guc")),
+                dc_voltage_v=_as_float(item.get("voltaj")),
+                dc_current_a=_as_float(item.get("akim")),
+                temp_c=_as_float(item.get("sicaklik")),
             )
         )
     return points

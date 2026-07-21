@@ -27,6 +27,17 @@ def test_build_adapters_real_mode_with_huawei():
     assert type(adapters[0]).__name__ == "HuaweiAdapter"
 
 
+def test_build_adapters_real_mode_with_tescom():
+    settings = Settings(
+        lm_use_mock_vendors=False,
+        tescom_base_url="http://host.docker.internal:8503",
+        tescom_api_key="k",
+    )
+    adapters = build_adapters(settings)
+    assert len(adapters) == 1
+    assert type(adapters[0]).__name__ == "TescomAdapter"
+
+
 async def test_run_ingestion_mock_end_to_end():
     settings = Settings(lm_use_mock_vendors=True, ingestion_interval_minutes=15)
     total = await run_ingestion(settings)
