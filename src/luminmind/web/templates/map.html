@@ -2,26 +2,55 @@
 {% block title %}Saha Haritası{% endblock %}
 {% block crumbs %}<b>Saha Haritası</b>{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  onerror="document.getElementById('map-error') &&
+    (document.getElementById('map-error').style.display='block')">
 <style>
-#map{height:560px; border:1px solid var(--line); border-radius:var(--r-md)}
-.leaflet-popup-content{font:14px/1.4 var(--sans); color:#111}
-.leaflet-popup-content b{font-size:15px}
+#map{height:560px; border:1px solid var(--line); border-radius:var(--r-md); background:#0e1319}
+.leaflet-popup-content-wrapper{background:#141a23; color:var(--text); border:1px solid var(--line)}
+.leaflet-popup-content{font:14px/1.4 var(--sans); color:var(--text)}
+.leaflet-popup-content b{font-size:15px; color:var(--amber)}
+.leaflet-popup-tip{background:#141a23}
+.leaflet-container a{color:var(--blue)}
+.leaflet-control-attribution{background:#141a23 !important; color:var(--text-faint) !important}
+.leaflet-control-attribution a{color:var(--text-dim) !important}
 .site-label{background:#141a23e0 !important; color:var(--text) !important;
   border:1px solid var(--line) !important; box-shadow:none !important;
   font:600 12px var(--sans) !important; padding:2px 8px !important; border-radius:6px}
 .site-label::before{display:none}
+#map-error{display:none; padding:14px 18px; margin-bottom:12px}
 </style>
 {% endblock %}
 {% block content %}
 <h1>Saha Haritası</h1>
 <p class="sub">İzlenen GES sahaları · OpenStreetMap üzerinde canlı konum</p>
 
+<div id="map-error" class="error">
+  Harita kütüphanesi yüklenemedi (internet bağlantısı veya güvenlik duvarı engeli).
+  Sayfayı yenilemeyi deneyin; sorun devam ederse ağ yöneticinize <code>unpkg.com</code>
+  ve <code>*.tile.openstreetmap.org</code> adreslerine izin verilmesini iletin.
+</div>
+
 {% if sites %}
 <div id="map"></div>
 <div class="row-inline" style="margin-top:14px; color:var(--text-dim); font-size:13px">
-  <span class="chip info">İzlenen saha</span>
+  <span class="chip info">{{ sites|length }} izlenen saha</span>
   <span style="color:var(--text-faint)">Bir işarete tıkla → ad, güç, koordinat</span>
+</div>
+<h2>Sahalar</h2>
+<div class="card">
+<table>
+  <tr><th>Saha</th><th>Enlem</th><th>Boylam</th><th style="text-align:right">Kapasite</th></tr>
+  {% for s in sites %}
+  <tr>
+    <td>{{ s.name }}</td>
+    <td class="num">{{ "%.4f"|format(s.lat) }}</td>
+    <td class="num">{{ "%.4f"|format(s.lon) }}</td>
+    <td class="num" style="text-align:right">
+      {{ "%.1f kWp"|format(s.capacity) if s.capacity else "—" }}</td>
+  </tr>
+  {% endfor %}
+</table>
 </div>
 {% else %}
 <div class="card pad" style="text-align:center; padding:60px 20px">
@@ -34,29 +63,63 @@
 {% endblock %}
 {% block scripts %}
 {% if sites %}
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  onerror="document.getElementById('map-error').style.display='block';
+    document.getElementById('map') && (document.getElementById('map').style.display='none')"></script>
 <script>
-const sites = {{ sites_json | safe }};
-const map = L.map('map', {scrollWheelZoom:true}).setView([39.0, 35.2], 6);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  {attribution:'© OpenStreetMap © CARTO', maxZoom:19, subdomains:'abcd'}).addTo(map);
+(function(){
+  if (typeof L === 'undefined') {
+    // Leaflet yüklenemedi — hata bandını göster
+    var el = document.getElementById('map-error');
+    if (el) el.style.display = 'block';
+    var m = document.getElementById('map');
+    if (m) m.style.display = 'none';
+    return;
+  }
+  const sites = {{ sites_json | safe }};
+  const map = L.map('map', {scrollWheelZoom: true}).setView([39.0, 35.2], 6);
 
-const markers = [];
-sites.forEach(s => {
-  const m = L.circleMarker([s.lat, s.lon], {
-    radius:10, color:'#0b0f14', weight:2, fillColor:'#f2b544', fillOpacity:1
-  }).addTo(map);
-  m.bindPopup(
-    '<b>' + s.name + '</b><br>' +
-    (s.capacity ? (s.capacity.toFixed(1) + ' kWp<br>') : '') +
-    'Konum: ' + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
-  );
-  m.bindTooltip(s.name, {permanent:true, direction:'right', offset:[12,0],
-    className:'site-label'});
-  markers.push(m);
-});
-if (markers.length > 1)
-  map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
+  // İki tile sağlayıcı: koyu (CARTO) tercih; erişilemezse standart OSM'e düş
+  const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    {attribution: '© OpenStreetMap © CARTO', maxZoom: 19, subdomains: 'abcd'});
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {attribution: '© OpenStreetMap', maxZoom: 19});
+  let tileErrors = 0;
+  dark.on('tileerror', function(){
+    tileErrors++;
+    if (tileErrors === 3) {  // birkaç kare düşerse OSM'e geçelim
+      map.removeLayer(dark);
+      osm.addTo(map);
+    }
+  });
+  dark.addTo(map);
+
+  const markers = [];
+  sites.forEach(function(s){
+    const m = L.circleMarker([s.lat, s.lon], {
+      radius: 10, color: '#0b0f14', weight: 2, fillColor: '#f2b544', fillOpacity: 1
+    }).addTo(map);
+    m.bindPopup(
+      '<b>' + s.name + '</b><br>' +
+      (s.capacity ? (s.capacity.toFixed(1) + ' kWp<br>') : '') +
+      'Konum: ' + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
+    );
+    m.bindTooltip(s.name, {permanent: true, direction: 'right', offset: [12, 0],
+      className: 'site-label'});
+    markers.push(m);
+  });
+  if (markers.length > 1) {
+    map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
+  } else if (markers.length === 1) {
+    map.setView([sites[0].lat, sites[0].lon], 10);
+  }
+
+  // Container boyutu geç oturursa Leaflet'in klasik "boş harita" tuzağını at:
+  // birkaç kez invalidateSize çağır; tarayıcı sekmesi arkaplandan dönerken de faydalı.
+  setTimeout(function(){ map.invalidateSize(); }, 100);
+  setTimeout(function(){ map.invalidateSize(); }, 500);
+  window.addEventListener('resize', function(){ map.invalidateSize(); });
+})();
 </script>
 {% endif %}
 {% endblock %}

@@ -199,8 +199,8 @@ form.inline{display:inline}
 
 /* Login page overrides */
 body.centered{display:grid; place-items:center; padding:24px}
-{% block head %}{% endblock %}
 </style>
+{% block head %}{% endblock %}
 </head>
 <body{% if not user %} class="centered"{% endif %}>
 {% if user %}
