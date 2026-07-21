@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Saha Haritası{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+#map{height:560px;border:1px solid var(--line);border-radius:13px}
+.leaflet-popup-content{font:14px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif}
+.leaflet-popup-content b{font-size:15px}
+.map-legend{display:flex;gap:20px;margin-top:12px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.map-legend span{display:inline-flex;align-items:center;gap:7px}
+.map-legend i{width:12px;height:12px;border-radius:50%;display:inline-block;border:2px solid #fff3}
+.map-empty{background:var(--panel);border:1px solid var(--line);border-radius:13px;
+padding:40px;text-align:center;color:var(--muted)}
+</style>
+{% endblock %}
+{% block content %}
+<h1>Saha Haritası</h1>
+<p class="sub">İzlenen GES sahaları · OpenStreetMap</p>
+
+{% if sites %}
+<div id="map"></div>
+<div class="map-legend">
+  <span><i style="background:#3fa9f5"></i> İzlenen saha</span>
+  <span>Bir işarete tıklayın: ad, güç ve koordinat</span>
+</div>
+{% else %}
+<div class="map-empty">Koordinatı tanımlı saha yok. Tesise enlem/boylam eklendiğinde
+burada haritada belirir.</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if sites %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const sites = {{ sites_json | safe }};
+const map = L.map('map', {scrollWheelZoom: true}).setView([39.0, 35.2], 6);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19, subdomains: 'abcd'
+}).addTo(map);
+
+const markers = [];
+sites.forEach(s => {
+  const m = L.circleMarker([s.lat, s.lon], {
+    radius: 9, color: '#0e1219', weight: 2, fillColor: '#3fa9f5', fillOpacity: 1
+  }).addTo(map);
+  m.bindPopup(
+    '<b>' + s.name + '</b><br>' +
+    (s.capacity ? (s.capacity + ' kWp<br>') : '') +
+    'Konum: ' + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
+  );
+  m.bindTooltip(s.name, {permanent: true, direction: 'right', offset: [10, 0],
+    className: 'site-label'});
+  markers.push(m);
+});
+if (markers.length > 1) {
+  map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
+}
+</script>
+{% endif %}
+{% endblock %}

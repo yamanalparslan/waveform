@@ -156,6 +156,19 @@ async def test_arbitrage_page_shows_plan_and_revenue(client, engine):
     assert "<svg" in response.text
 
 
+async def test_map_page_embeds_sites_and_leaflet(client):
+    await do_login(client)
+    response = await client.get("/ui/harita")
+    assert response.status_code == 200
+    # Leaflet + OSM/CARTO gerçek harita altyapısı
+    assert "leaflet" in response.text.lower()
+    assert "basemaps.cartocdn.com" in response.text
+    # Konya GES koordinatları JS'e gömülü
+    assert "37.87" in response.text and "32.48" in response.text
+    assert "Konya GES" in response.text
+    assert 'id="map"' in response.text
+
+
 async def test_logout_clears_session(client):
     await do_login(client)
     response = await client.post("/ui/logout")

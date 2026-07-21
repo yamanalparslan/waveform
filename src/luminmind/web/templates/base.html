@@ -49,6 +49,7 @@ label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
 .toolbar form{display:flex;gap:8px;align-items:center} .toolbar input{width:auto}
 .revenue{font-size:24px;font-weight:700;color:var(--good)}
 </style>
+{% block head %}{% endblock %}
 </head>
 <body>
 {% if user %}
@@ -56,6 +57,7 @@ label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
   <a class="logo" href="/ui">Lumin<span>Mind</span></a>
   <nav>
     <a href="/ui" class="{{ 'active' if section == 'overview' }}">Genel Bakış</a>
+    <a href="/ui/harita" class="{{ 'active' if section == 'map' }}">Harita</a>
     {% if plant %}
     <a href="/ui/plants/{{ plant.id }}" class="{{ 'active' if section == 'plant' }}">Tesis</a>
     <a href="/ui/plants/{{ plant.id }}/anomalies" class="{{ 'active' if section == 'anomalies' }}">Anomaliler</a>
@@ -69,5 +71,6 @@ label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
 </header>
 {% endif %}
 <main>{% block content %}{% endblock %}</main>
+{% block scripts %}{% endblock %}
 </body>
 </html>

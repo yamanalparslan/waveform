@@ -5,6 +5,7 @@ Oturum: login formu JWT üretir ve HttpOnly çerezde taşır; sayfa bağımlıl�
 olarak üretilir (charts.py) — tarayıcıda JS gerekmez. Saatler TRT gösterilir.
 """
 
+import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -166,6 +167,37 @@ async def overview(
             "plants": cards,
             "influx_ok": influx is not None,
             "today_label": now.astimezone(TRT).strftime("%d.%m.%Y"),
+        },
+    )
+
+
+@router.get("/harita", response_class=HTMLResponse)
+async def map_page(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_web_user)],
+) -> HTMLResponse:
+    """Koordinatı tanımlı tüm sahaları Leaflet + OpenStreetMap üzerinde gösterir."""
+    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    sites = [
+        {
+            "name": p.name,
+            "lat": p.latitude,
+            "lon": p.longitude,
+            "capacity": p.dc_capacity_kwp,
+        }
+        for p in plants
+        if p.latitude is not None and p.longitude is not None
+    ]
+    return templates.TemplateResponse(
+        request,
+        "map.html",
+        {
+            "user": user,
+            "section": "map",
+            "plant": plants[0] if plants else None,
+            "sites": sites,
+            "sites_json": json.dumps(sites),
         },
     )
 
