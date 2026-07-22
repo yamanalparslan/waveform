@@ -115,6 +115,7 @@ def normalize_tescom_devices(
                 dc_voltage_v=_as_float(item.get("voltaj")),
                 dc_current_a=_as_float(item.get("akim")),
                 temp_c=_as_float(item.get("sicaklik")),
+                energy_daily_kwh=_as_float(item.get("gunluk_uretim_kwh")),
                 error_code=str(error_code) if error_code is not None else None,
                 status=item.get("durum") if isinstance(item.get("durum"), str) else None,
             )

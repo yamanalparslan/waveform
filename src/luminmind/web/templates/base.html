@@ -97,7 +97,7 @@ nav.side .divider{height:1px; background:var(--line); margin:14px 6px}
 nav.side .section-label{font-size:10.5px; text-transform:uppercase; letter-spacing:.8px;
   color:var(--text-faint); padding:8px 12px 6px; font-weight:700}
 
-main{padding:24px 34px 48px; max-width:1240px; width:100%}
+main{padding:24px 34px 48px; max-width:1600px; margin:0 auto; width:100%}
 .topbar{display:flex; align-items:center; gap:18px; margin-bottom:22px; flex-wrap:wrap}
 .crumbs{color:var(--text-faint); font-size:13px}
 .crumbs b{color:var(--text); font-weight:600}
@@ -235,53 +235,32 @@ body.centered{display:grid; place-items:center; padding:24px}
       <div class="divider"></div>
       <div class="section-label">Tesisler</div>
       {% for sp in sidebar_plants %}
-        {% if sp.is_group %}
-          {% if sp.id %}
-          <a href="/ui/plants/{{ sp.id }}"
-             class="plant-link plant-group {{ 'active' if plant and sp.id == plant.id }}">
-            <span class="icn">▪</span>
-            <span class="plant-name">{{ sp.name }}</span>
-            {% if sp.open_anomalies %}<span class="badge-count">{{ sp.open_anomalies }}</span>{% endif %}
-          </a>
-          {% else %}
-          <div class="plant-link plant-group static">
-            <span class="icn">▪</span>
-            <span class="plant-name">{{ sp.name }}</span>
-            {% if sp.open_anomalies %}<span class="badge-count">{{ sp.open_anomalies }}</span>{% endif %}
-          </div>
-          {% endif %}
-          {% for child in sp.children %}
-          <a href="/ui/plants/{{ child.id }}"
-             class="sub plant-child {{ 'active' if plant and child.id == plant.id }}">
-            <span class="icn">└</span>
-            <span class="plant-name">{{ child.name }}</span>
-            {% if child.open_anomalies %}<span class="badge-count">{{ child.open_anomalies }}</span>{% endif %}
-          </a>
-          {% if plant and child.id == plant.id %}
-          <a href="/ui/plants/{{ plant.id }}/anomalies"
-             class="sub sub-2 {{ 'active' if section == 'anomalies' }}">
-            <span class="icn">△</span> Anomaliler</a>
-          <a href="/ui/plants/{{ plant.id }}/arbitrage"
-             class="sub sub-2 {{ 'active' if section == 'arbitrage' }}">
-            <span class="icn">⇄</span> Arbitraj</a>
-          {% endif %}
-          {% endfor %}
-        {% else %}
-          <a href="/ui/plants/{{ sp.id }}"
-             class="plant-link {{ 'active' if plant and sp.id == plant.id }}">
-            <span class="icn">▪</span>
-            <span class="plant-name">{{ sp.name }}</span>
-            {% if sp.open_anomalies %}<span class="badge-count">{{ sp.open_anomalies }}</span>{% endif %}
-          </a>
-          {% if plant and sp.id == plant.id %}
-          <a href="/ui/plants/{{ plant.id }}/anomalies"
-             class="sub {{ 'active' if section == 'anomalies' }}">
-            <span class="icn">△</span> Anomaliler</a>
-          <a href="/ui/plants/{{ plant.id }}/arbitrage"
-             class="sub {{ 'active' if section == 'arbitrage' }}">
-            <span class="icn">⇄</span> Arbitraj</a>
-          {% endif %}
-        {% endif %}
+      {% set parent_active = plant and (sp.id == plant.id or plant.id in sp.children|map(attribute='id')) %}
+      <a href="/ui/plants/{{ sp.id }}"
+         class="plant-link {{ 'active' if parent_active }}">
+        <span class="icn">▪</span>
+        <span class="plant-name">{{ sp.name }}</span>
+        {% if sp.open_anomalies %}<span class="badge-count">{{ sp.open_anomalies }}</span>{% endif %}
+      </a>
+      
+
+      {% if plant and sp.id == plant.id %}
+      <a href="/ui/plants/{{ plant.id }}/anomalies"
+         class="sub {{ 'active' if section == 'anomalies' }}">
+        <span class="icn">△</span> Anomaliler</a>
+      <a href="/ui/plants/{{ plant.id }}/arbitrage"
+         class="sub {{ 'active' if section == 'arbitrage' }}">
+        <span class="icn">⇄</span> Arbitraj</a>
+      {% endif %}
+      {% if parent_active and sp.children %}
+      {% for child in sp.children %}
+      <a href="/ui/plants/{{ child.id }}"
+         class="sub {{ 'active' if plant and child.id == plant.id else '' }}">
+        <span class="icn">↳</span> {{ child.short_name }}
+        {% if child.open_anomalies %}<span class="badge-count">{{ child.open_anomalies }}</span>{% endif %}
+      </a>
+      {% endfor %}
+      {% endif %}
       {% endfor %}
       {% endif %}
       {% if user.role == 'admin' %}

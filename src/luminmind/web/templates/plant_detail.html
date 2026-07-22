@@ -33,7 +33,7 @@
   <div class="kpi accent-teal">
     <div class="label">Günlük üretim</div>
     <div class="value">{{ kpis.energy_kwh }}<small>kWh</small></div>
-    <div class="trend">15 dk toplamı</div>
+    <div class="trend">{{ kpis.energy_trend }}</div>
   </div>
   <div class="kpi accent-blue">
     <div class="label">Beklenen (ikiz)</div>
@@ -50,6 +50,24 @@
 <h2>Üretim — gerçek vs beklenen</h2>
 <div class="chart-wrap">{{ production_chart | safe }}</div>
 
+{% if is_parent and child_sites_json != "[]" %}
+<br>
+<div class="grid split-2">
+  <div class="card" style="height:350px" id="map-container"></div>
+  <div class="card pad">
+    <h3 style="margin-top:0">Alt Tesisler</h3>
+    <ul style="list-style:none; padding:0; margin-top:16px; color:var(--text-dim); font-size:14px; line-height:2">
+      <script>
+        var sites = {{ child_sites_json | safe }};
+        for(let s of sites) {
+          document.write(`<li><a href="/ui/plants/${s.id}" style="color:var(--amber); font-weight:600">${s.name}</a> — ${s.capacity} kWp</li>`);
+        }
+      </script>
+    </ul>
+  </div>
+</div>
+{% endif %}
+
 <h2>İnvertörler ({{ inverter_rows|length }})</h2>
 <div class="card">
 <table>
@@ -58,6 +76,7 @@
     <th>Durum</th>
     <th style="text-align:right">Anlık güç</th>
     <th style="text-align:right">Sıcaklık</th>
+    <th style="text-align:right">Günlük Üretim</th>
     <th>Hata / Durum</th>
     <th style="text-align:right">Son görülme</th>
   </tr>
@@ -69,11 +88,12 @@
     <td><span class="chip {{ r.health_chip }}">{{ r.health_label }}</span></td>
     <td class="num" style="text-align:right">{{ r.power }}</td>
     <td class="num" style="text-align:right; color:{{ r.temp_color }}">{{ r.temp }}</td>
+    <td class="num" style="text-align:right">{{ r.energy_daily }}</td>
     <td>{{ r.error_or_status }}</td>
     <td class="num" style="text-align:right; color:var(--text-faint)">{{ r.last_seen }}</td>
   </tr>
   {% else %}
-  <tr><td colspan="6">
+  <tr><td colspan="7">
     <div class="note" style="padding:20px 0; text-align:center; margin:0">
       Henüz cihaz görülmedi · ingestion çalıştıkça burada belirir
     </div>
@@ -101,3 +121,48 @@
 </div>
 {% endif %}
 {% endblock %}
+
+{% block scripts %}
+{% if is_parent and child_sites_json != "[]" %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+.leaflet-popup-content-wrapper{background:#141a23; color:var(--text); border:1px solid var(--line)}
+.leaflet-popup-content{margin:10px; font-family:var(--sans)}
+.leaflet-popup-tip{background:#141a23; border:1px solid var(--line)}
+</style>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  var sites = {{ child_sites_json | safe }};
+  if(sites.length > 0) {
+    var map = L.map('map-container');
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+
+    var markers = [];
+    var amberIcon = L.divIcon({
+      className: 'custom-div-icon',
+      html: "<div style='background-color:var(--amber); width:14px; height:14px; border-radius:50%; border:2px solid #231802; box-shadow:0 0 8px rgba(242,181,68,0.5);'></div>",
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    });
+
+    sites.forEach(function(s) {
+      if(s.lat && s.lon) {
+        var m = L.marker([s.lat, s.lon], {icon: amberIcon}).addTo(map);
+        m.bindPopup('<b>' + s.name + '</b><br>' + s.capacity + ' kWp');
+        markers.push(m);
+      }
+    });
+
+    if (markers.length > 1) {
+      map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
+    } else if (markers.length === 1) {
+      map.setView([sites[0].lat, sites[0].lon], 13);
+    }
+    setTimeout(function(){ map.invalidateSize(); }, 200);
+  }
+</script>
+{% endif %}
+{% endblock %}
+

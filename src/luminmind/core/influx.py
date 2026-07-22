@@ -137,11 +137,11 @@ class InfluxStore:
         metric: str,
         start: datetime,
         stop: datetime,
-        resolution: str = "15m",
+        resolution: str = "5m",
     ) -> list[tuple[datetime, float]]:
         """Tesis bazlı tek metrik serisi; cihaz değerleri zaman damgasında toplanır."""
         sources = {
-            "15m": (BUCKET_RAW, MEASUREMENT_RAW),
+            "5m": (BUCKET_RAW, MEASUREMENT_RAW),
             "1h": (BUCKET_HOURLY, MEASUREMENT_HOURLY),
             "1d": (BUCKET_DAILY, MEASUREMENT_DAILY),
         }

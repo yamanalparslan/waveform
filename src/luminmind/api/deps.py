@@ -23,7 +23,7 @@ class TimeseriesSource(Protocol):
 
     async def query_plant_series(
         self, vendor_plant_id: str, metric: str, start: datetime, stop: datetime,
-        resolution: str = "15m",
+        resolution: str = "5m",
     ) -> list[tuple[datetime, float]]: ...
 
     async def query_device_series(

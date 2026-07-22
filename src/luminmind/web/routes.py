@@ -135,46 +135,29 @@ async def sidebar_plants_context(
         )
     ).all()
     counts = {row[0]: row[1] for row in counts_rows}
-
-    # "Ana · Alt" biçimindeki isimleri grupla; ayraç yoksa tek başına listele.
-    groups: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
+    plants_by_name = {p.name: p for p in plants}
+    plant_items = {}
+    
     for p in plants:
-        head, sep, tail = p.name.partition(" · ")
-        key = head
-        if key not in groups:
-            groups[key] = {"parent": None, "children": []}
-            order.append(key)
-        entry = {
-            "id": p.id,
-            "name": tail if sep else p.name,
+        plant_items[p.id] = {
+            "id": p.id, 
+            "name": p.name, 
+            "short_name": p.name.split(" · ")[-1] if " · " in p.name else p.name,
             "open_anomalies": counts.get(p.id, 0),
+            "children": []
         }
-        if sep:
-            groups[key]["children"].append(entry)
-        else:
-            groups[key]["parent"] = {
-                "id": p.id,
-                "name": p.name,
-                "open_anomalies": counts.get(p.id, 0),
-            }
+        
+    top_level = []
+    for p in plants:
+        if " · " in p.name:
+            parent_name = p.name.split(" · ")[0]
+            if parent_name in plants_by_name:
+                parent_id = plants_by_name[parent_name].id
+                plant_items[parent_id]["children"].append(plant_items[p.id])
+                continue
+        top_level.append(plant_items[p.id])
 
-    sidebar: list[dict[str, Any]] = []
-    for key in order:
-        g = groups[key]
-        if g["children"]:
-            child_alerts = sum(c["open_anomalies"] for c in g["children"])
-            parent = g["parent"] or {"id": None, "name": key, "open_anomalies": 0}
-            sidebar.append({
-                "id": parent["id"],
-                "name": key,
-                "open_anomalies": parent["open_anomalies"] + child_alerts,
-                "children": g["children"],
-                "is_group": True,
-            })
-        elif g["parent"] is not None:
-            sidebar.append({**g["parent"], "children": [], "is_group": False})
-    return sidebar, list(plants)
+    return top_level, list(plants)
 
 
 def _as_utc(ts: datetime | None) -> datetime | None:
@@ -268,25 +251,70 @@ async def overview(
     ).all()
     open_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in open_counts_rows}
 
+    children_by_parent_name = {}
+    top_level_plants = []
+    
+    for p in plants:
+        if " · " in p.name:
+            parent_name = p.name.split(" · ")[0]
+            children_by_parent_name.setdefault(parent_name, []).append(p)
+        else:
+            top_level_plants.append(p)
+
     total_power = 0.0
     total_energy = 0.0
     plants_producing = 0
     cards: list[dict[str, Any]] = []
-    for plant in plants:
+    for plant in top_level_plants:
         last_power_val = 0.0
         today_energy_val = 0.0
         series: list[tuple[datetime, float]] = []
+        children = children_by_parent_name.get(plant.name, [])
+        is_parent = len(children) > 0
+
         if influx is not None:
-            series = await influx.query_plant_series(
-                plant.vendor_plant_id, "ac_power_kw", start, min(stop, now), "15m"
-            )
+            if is_parent:
+                combined_series = {}
+                for child in children:
+                    child_series = await influx.query_plant_series(
+                        child.vendor_plant_id, "ac_power_kw", start, min(stop, now), "5m"
+                    )
+                    for t, v in child_series:
+                        combined_series[t] = combined_series.get(t, 0.0) + v
+                series = sorted(combined_series.items())
+            else:
+                series = await influx.query_plant_series(
+                    plant.vendor_plant_id, "ac_power_kw", start, min(stop, now), "5m"
+                )
             if series:
                 last_power_val = float(series[-1][1])
                 today_energy_val = sum(v for _, v in series) * 0.25
+
+        inverters = []
+        if is_parent:
+            for c in children:
+                inverters.extend(await c.awaitable_attrs.inverters)
+        else:
+            inverters = list(await plant.awaitable_attrs.inverters)
+            
+        inv_power_sum = sum((getattr(inv, "last_power_kw", 0.0) or 0.0) for inv in inverters)
+        inv_daily_sum = sum((getattr(inv, "last_energy_daily_kwh", 0.0) or 0.0) for inv in inverters)
+        
+        if inv_power_sum > 0:
+            last_power_val = inv_power_sum
+        if inv_daily_sum > 0:
+            today_energy_val = inv_daily_sum
         total_power += last_power_val
         total_energy += today_energy_val
         if last_power_val > 0.1:
             plants_producing += 1
+            
+        plant_open_anomalies = open_counts.get(plant.id, 0)
+        capacity = plant.dc_capacity_kwp or 0.0
+        if is_parent:
+            plant_open_anomalies += sum(open_counts.get(c.id, 0) for c in children)
+            capacity += sum((c.dc_capacity_kwp or 0.0) for c in children)
+
         status_class = "ok" if last_power_val > 0.1 else "muted"
         status_label = "Üretiyor" if last_power_val > 0.1 else "Bekliyor"
         cards.append(
@@ -298,10 +326,10 @@ async def overview(
                 "today_energy": (
                     f"{_fmt_int(today_energy_val)} kWh" if influx is not None else "—"
                 ),
-                "open_anomalies": open_counts.get(plant.id, 0),
+                "open_anomalies": plant_open_anomalies,
                 "capacity_label": (
-                    f"{_fmt_1(plant.dc_capacity_kwp)} kWp"
-                    if plant.dc_capacity_kwp
+                    f"{_fmt_1(capacity)} kWp"
+                    if capacity
                     else "kapasite tanımsız"
                 ),
                 "status_class": status_class,
@@ -338,10 +366,7 @@ async def overview(
         for e in recent_events_rows
     ]
 
-    sidebar_plants = [
-        {"id": p.id, "name": p.name, "open_anomalies": open_counts.get(p.id, 0)}
-        for p in plants
-    ]
+    sidebar_plants, _ = await sidebar_plants_context(session)
     return templates.TemplateResponse(
         request,
         "overview.html",
@@ -375,7 +400,7 @@ async def map_page(
     sites = [
         {"name": p.name, "lat": p.latitude, "lon": p.longitude, "capacity": p.dc_capacity_kwp}
         for p in plants
-        if p.latitude is not None and p.longitude is not None
+        if " · " not in p.name and p.latitude is not None and p.longitude is not None
     ]
     return templates.TemplateResponse(
         request,
@@ -419,6 +444,9 @@ async def plant_detail(
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
     plant = await _load_plant(session, plant_id)
+    children = (await session.scalars(select(Plant).where(Plant.name.startswith(f"{plant.name} · ")))).all()
+    is_parent = len(children) > 0
+    
     day = _parse_day(request.query_params.get("date"), datetime.now(tz=TRT).date())
     start, stop = _trt_day_window(day)
 
@@ -428,10 +456,22 @@ async def plant_detail(
     expected_kwh = 0.0
     influx = request.app.state.influx
     if influx is not None:
-        actual = plant_actual_from_samples(await influx.query_raw_window(start, stop)).get(
-            plant.vendor_plant_id, {}
-        )
-        expected = (await influx.query_twin_window(start, stop)).get(plant.vendor_plant_id, {})
+        actual_dict = plant_actual_from_samples(await influx.query_raw_window(start, stop))
+        expected_dict = await influx.query_twin_window(start, stop)
+        actual = {}
+        expected = {}
+        
+        if is_parent:
+            child_ids = [c.vendor_plant_id for c in children]
+            for cid in child_ids:
+                for t, v in actual_dict.get(cid, {}).items():
+                    actual[t] = actual.get(t, 0.0) + v
+                for t, v in expected_dict.get(cid, {}).items():
+                    expected[t] = expected.get(t, 0.0) + v
+        else:
+            actual = actual_dict.get(plant.vendor_plant_id, {})
+            expected = expected_dict.get(plant.vendor_plant_id, {})
+
         if actual:
             series.append(Series("Gerçek", "#f2b544", sorted(actual.items())))
             peak_kw = max(actual.values())
@@ -441,19 +481,47 @@ async def plant_detail(
             expected_kwh = sum(expected.values()) * 0.25
 
     pr = 0.0
+    ui_energy_kwh = energy_kwh
+
+    inverters = []
+    batteries = []
+    if is_parent:
+        for c in children:
+            inverters.extend(await c.awaitable_attrs.inverters)
+            batteries.extend(await c.awaitable_attrs.batteries)
+    else:
+        inverters = list(await plant.awaitable_attrs.inverters)
+        batteries = list(await plant.awaitable_attrs.batteries)
+
+    inverter_rows = _build_inverter_rows(inverters)
+    daily_sum = sum((getattr(inv, "last_energy_daily_kwh", 0.0) or 0.0) for inv in inverters)
+    
+    if daily_sum > 0:
+        ui_energy_kwh = daily_sum
+
     if expected_kwh > 1.0:
-        pr = min(200.0, energy_kwh / expected_kwh * 100.0)
+        pr = min(200.0, ui_energy_kwh / expected_kwh * 100.0)
     kpis = {
         "peak_kw": _fmt_int(peak_kw) if peak_kw else "—",
-        "energy_kwh": _fmt_int(energy_kwh) if energy_kwh else "—",
+        "energy_kwh": _fmt_int(ui_energy_kwh) if ui_energy_kwh else "—",
+        "energy_trend": "cihaz verisi" if daily_sum > 0 else "15 dk toplamı",
         "expected_kwh": _fmt_int(expected_kwh) if expected_kwh else "—",
         "pr": _fmt_1(pr) if pr else "—",
         "pr_ok": pr >= 85.0,
     }
 
-    inverters = await plant.awaitable_attrs.inverters
-    inverter_rows = _build_inverter_rows(inverters)
     sidebar_plants, _ = await sidebar_plants_context(session)
+
+    child_sites = []
+    if is_parent:
+        for c in children:
+            child_sites.append({
+                "id": str(c.id),
+                "name": c.name.split(" · ")[-1],
+                "lat": c.latitude,
+                "lon": c.longitude,
+                "capacity": c.dc_capacity_kwp
+            })
 
     return templates.TemplateResponse(
         request,
@@ -467,8 +535,10 @@ async def plant_detail(
             "day_str": day.isoformat(),
             "kpis": kpis,
             "production_chart": line_chart(series, TRT, unit="kW"),
+            "is_parent": is_parent,
+            "child_sites_json": json.dumps(child_sites) if is_parent else "[]",
             "inverter_rows": inverter_rows,
-            "batteries": await plant.awaitable_attrs.batteries,
+            "batteries": batteries,
             "page_title": plant.name,
             "auto_refresh_s": 60,
         },
@@ -530,6 +600,7 @@ def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
         rows.append(
             {
                 "vendor_device_id": inv.vendor_device_id,
+                "plant_id": inv.plant_id,
                 "health_chip": health_chip,
                 "health_label": health_label,
                 "power": (
@@ -537,6 +608,7 @@ def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
                 ),
                 "temp": f"{inv.last_temp_c:.1f} °C" if inv.last_temp_c is not None else "—",
                 "temp_color": temp_color,
+                "energy_daily": f"{inv.last_energy_daily_kwh:.1f} kWh" if getattr(inv, "last_energy_daily_kwh", None) is not None else "—",
                 "error_or_status": error_or_status,
                 "last_seen": last_seen_local,
             }
@@ -564,13 +636,21 @@ async def inverter_detail(
     )
 
     plant = await _load_plant(session, plant_id)
+    
+    # Check if the plant has children (by string matching name, e.g. 'Parent · Child')
+    all_plants = (await session.scalars(select(Plant))).all()
+    valid_plant_ids = [plant.id]
+    for p in all_plants:
+        if " · " in p.name and p.name.split(" · ")[0] == plant.name:
+            valid_plant_ids.append(p.id)
+
     inverter = (
         await session.scalars(
             select(Inverter).where(
-                Inverter.plant_id == plant.id, Inverter.vendor_device_id == device_id
+                Inverter.plant_id.in_(valid_plant_ids), Inverter.vendor_device_id == device_id
             )
         )
-    ).one_or_none()
+    ).first()
     if inverter is None:
         raise HTTPException(status_code=404, detail="inverter not found")
 
@@ -764,7 +844,7 @@ async def anomaly_detail(
             )
         else:
             points = await influx.query_plant_series(
-                plant.vendor_plant_id, "ac_power_kw", w_start, w_stop, "15m"
+                plant.vendor_plant_id, "ac_power_kw", w_start, w_stop, "5m"
             )
         chart_html = line_chart([Series("Güç", "#f2b544", points)], TRT, unit="kW")
 

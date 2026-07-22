@@ -74,6 +74,7 @@ class Inverter(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_power_kw: Mapped[float | None] = mapped_column(Float)
     last_temp_c: Mapped[float | None] = mapped_column(Float)
+    last_energy_daily_kwh: Mapped[float | None] = mapped_column(Float)
     last_error_code: Mapped[str | None] = mapped_column(String(30))
     last_status: Mapped[str | None] = mapped_column(String(30))  # üreticiden gelen ham durum
 

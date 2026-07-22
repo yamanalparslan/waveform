@@ -36,7 +36,7 @@ class WeatherSample:
 class WeatherProvider(Protocol):
     """Twin görevinin hava verisi kaynağı (gerçek istemci veya test fake'i)."""
 
-    async def fetch_day_15m(
+    async def fetch_day_5m(
         self, latitude: float, longitude: float, day: date
     ) -> list[WeatherSample]: ...
 
@@ -74,7 +74,7 @@ class OpenMeteoClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def fetch_day_15m(
+    async def fetch_day_5m(
         self, latitude: float, longitude: float, day: date
     ) -> list[WeatherSample]:
         response = await request_with_retry(

@@ -53,6 +53,7 @@ class InverterSnapshot:
     ts: datetime
     power_kw: float | None
     temp_c: float | None
+    energy_daily_kwh: float | None
     error_code: str | None
     status: str | None
 
@@ -72,6 +73,7 @@ def latest_snapshots(points: Sequence[TelemetryPoint]) -> dict[tuple[str, str], 
                 ts=p.ts,
                 power_kw=p.ac_power_kw,
                 temp_c=p.temp_c,
+                energy_daily_kwh=p.energy_daily_kwh,
                 error_code=p.error_code,
                 status=p.status,
             )
@@ -109,6 +111,7 @@ async def upsert_inverter_state(
         inverter.last_seen_at = snap.ts
         inverter.last_power_kw = snap.power_kw
         inverter.last_temp_c = snap.temp_c
+        inverter.last_energy_daily_kwh = snap.energy_daily_kwh
         inverter.last_error_code = snap.error_code
         inverter.last_status = snap.status
         updated += 1
