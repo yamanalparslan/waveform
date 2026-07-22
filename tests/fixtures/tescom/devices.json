@@ -1,5 +1,6 @@
 [
   {
+    "fabrika_id": "mekanik",
     "slave_id": 1,
     "son_zaman": "2026-07-21 10:39:27.661885",
     "zaman": "2026-07-21 10:39:27.661885",
@@ -11,6 +12,19 @@
     "durum": "AKTIF"
   },
   {
+    "fabrika_id": "uretim",
+    "slave_id": 1,
+    "son_zaman": "2026-07-21 10:39:27.661885",
+    "zaman": "2026-07-21 10:39:27.661885",
+    "guc": 90.0,
+    "voltaj": 700.0,
+    "akim": 60.0,
+    "sicaklik": 48.0,
+    "hata_kodu": 0,
+    "durum": "AKTIF"
+  },
+  {
+    "fabrika_id": "uretim",
     "slave_id": 2,
     "son_zaman": "2026-07-21 10:39:27.661885",
     "zaman": "2026-07-21 10:39:27.661885",

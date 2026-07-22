@@ -14,7 +14,7 @@ from typing import Protocol
 from luminmind.adapters import MockAdapter, VendorAdapter
 from luminmind.config import Settings, get_settings
 from luminmind.core.influx import InfluxStore
-from luminmind.core.schemas import TelemetryPoint
+from luminmind.core.schemas import PlantMeta, TelemetryPoint
 from luminmind.workers.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -82,11 +82,20 @@ def build_adapters(settings: Settings) -> list[VendorAdapter]:
     return adapters
 
 
-async def ingest_adapter(adapter: VendorAdapter, since: datetime) -> list[TelemetryPoint]:
-    """Tek adaptörün tüm tesislerini çeker; tesis bazlı hatalar diğerlerini engellemez."""
+async def ingest_adapter(
+    adapter: VendorAdapter, since: datetime
+) -> tuple[list[TelemetryPoint], list[PlantMeta]]:
+    """Tek adaptörün tüm tesislerini çeker; tesis bazlı hatalar diğerlerini engellemez.
+
+    Ölçüm noktalarının yanında keşfedilen tesis meta verilerini de döndürür
+    (Postgres'e otomatik senkron için — üretici yeni bir tesis/fabrika ekleyince
+    LuminMind'da otomatik belirir).
+    """
     collected: list[TelemetryPoint] = []
+    discovered: list[PlantMeta] = []
     async with adapter:
         plants = await adapter.fetch_plants()
+        discovered.extend(plants)
         for plant in plants:
             try:
                 points = await adapter.fetch_telemetry(plant.vendor_plant_id, since=since)
@@ -104,18 +113,25 @@ async def ingest_adapter(adapter: VendorAdapter, since: datetime) -> list[Teleme
                 plant.vendor_plant_id,
                 len(points),
             )
-    return collected
+    return collected, discovered
 
 
 async def _ingest_to(sink: TelemetrySink, settings: Settings) -> int:
     since = datetime.now(tz=UTC) - timedelta(minutes=settings.ingestion_interval_minutes)
     total = 0
     all_points: list[TelemetryPoint] = []
+    all_plants: list[PlantMeta] = []
     for adapter in build_adapters(settings):
-        points = await ingest_adapter(adapter, since=since)
+        points, plants = await ingest_adapter(adapter, since=since)
         await sink.write_telemetry(points)
         total += len(points)
         all_points.extend(points)
+        all_plants.extend(plants)
+    if all_plants:
+        try:
+            await upsert_discovered_plants(all_plants, settings)
+        except Exception:
+            logger.exception("plant upsert failed")
     if all_points:
         try:
             await sync_inverter_health(all_points, settings)
@@ -123,6 +139,57 @@ async def _ingest_to(sink: TelemetrySink, settings: Settings) -> int:
             logger.exception("inverter health sync failed")
     logger.info("ingestion run complete: %d points", total)
     return total
+
+
+async def upsert_discovered_plants(
+    plant_metas: list[PlantMeta], settings: Settings
+) -> None:
+    """Üreticiden keşfedilen tesisleri Postgres'e ekler (yeni fabrika keşfi için).
+
+    Idempotent: mevcut (vendor, vendor_plant_id) satırı varsa dokunmaz. Bir sahibi
+    olması gerektiği için ilk admin kullanıcıya atanır.
+    """
+    from sqlalchemy import select
+
+    from luminmind.core.db import create_engine, session_scope
+    from luminmind.core.models import Plant, User
+
+    engine = create_engine(settings.postgres_dsn)
+    try:
+        async with session_scope(engine) as session:
+            admin = (
+                await session.scalars(select(User).where(User.role == "admin").limit(1))
+            ).one_or_none()
+            if admin is None:
+                return  # ilk seed henüz atılmadıysa atla
+            for pm in plant_metas:
+                existing = (
+                    await session.scalars(
+                        select(Plant).where(
+                            Plant.vendor == pm.vendor.value,
+                            Plant.vendor_plant_id == pm.vendor_plant_id,
+                        )
+                    )
+                ).one_or_none()
+                if existing is not None:
+                    continue
+                session.add(
+                    Plant(
+                        owner_id=admin.id,
+                        name=pm.name,
+                        vendor=pm.vendor.value,
+                        vendor_plant_id=pm.vendor_plant_id,
+                        latitude=pm.latitude,
+                        longitude=pm.longitude,
+                        dc_capacity_kwp=pm.dc_capacity_kwp,
+                    )
+                )
+                logger.info(
+                    "auto-created plant vendor=%s plant_id=%s name=%s",
+                    pm.vendor.value, pm.vendor_plant_id, pm.name,
+                )
+    finally:
+        await engine.dispose()
 
 
 async def sync_inverter_health(

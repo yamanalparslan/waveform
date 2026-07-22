@@ -310,7 +310,7 @@ async def test_inverter_detail_page(client, engine):
         session.add(Inverter(
             plant_id=plant.id, vendor_device_id="99",
             model="Test Inv", ac_capacity_kw=250.0,
-            last_seen_at=NOW, last_power_kw=142.3, last_temp_c=48.0,
+            last_seen_at=datetime.now(tz=UTC), last_power_kw=142.3, last_temp_c=48.0,
             last_error_code="0", last_status="AKTIF",
         ))
     async with session_scope(engine) as session:
