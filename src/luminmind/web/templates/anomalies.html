@@ -27,8 +27,9 @@
   <tr><th>Tür</th><th>Şiddet</th><th>Sapma</th><th>Başlangıç (TRT)</th>
       <th>Durum</th><th>İşlem</th></tr>
   {% for event in events %}
-  <tr>
-    <td>{{ kind_labels.get(event.kind, event.kind) }}</td>
+  <tr onclick="window.location.href='/ui/anomalies/{{ event.id }}'" style="cursor:pointer">
+    <td><a href="/ui/anomalies/{{ event.id }}" style="color:var(--amber)">
+      {{ kind_labels.get(event.kind, event.kind) }}</a></td>
     <td><span class="chip {{ 'crit' if event.severity == 'critical' else 'warn' }}">
       {{ severity_labels.get(event.severity, event.severity) }}</span></td>
     <td class="num" style="color:{{ 'var(--coral)' if event.deviation_pct < -10 else 'var(--amber)' }}">
@@ -38,14 +39,16 @@
       {{ status_labels.get(event.status, event.status) }}</span></td>
     <td>
       {% if event.status == "open" %}
-      <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status">
+      <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status"
+        onclick="event.stopPropagation()">
         <input type="hidden" name="status" value="acked">
         <input type="hidden" name="back" value="{{ back_url }}">
         <button>Onayla</button>
       </form>
       {% endif %}
       {% if event.status != "resolved" %}
-      <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status">
+      <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status"
+        onclick="event.stopPropagation()">
         <input type="hidden" name="status" value="resolved">
         <input type="hidden" name="back" value="{{ back_url }}">
         <button>Çöz</button>

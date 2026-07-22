@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ kind_label }} · {{ plant.name }}{% endblock %}
+{% block crumbs %}
+<a href="/ui">Genel Bakış</a> ·
+<a href="/ui/plants/{{ plant.id }}">{{ plant.name }}</a> ·
+<a href="/ui/plants/{{ plant.id }}/anomalies">Anomaliler</a> ·
+<b>{{ kind_label }}</b>
+{% endblock %}
+{% block content %}
+<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap">
+  <div>
+    <h1>{{ kind_label }}</h1>
+    <p class="sub">
+      <span class="chip {{ severity_chip }}">{{ severity_label }}</span>
+      <span class="chip {{ status_chip }}">{{ status_label }}</span>
+      <span class="chip plain">{{ plant.name }}</span>
+      {% if device_id %}<span class="chip muted">Cihaz {{ device_id }}</span>{% endif %}
+    </p>
+  </div>
+  <div class="row-inline">
+    {% if event.status == 'open' %}
+    <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status">
+      <input type="hidden" name="status" value="acked">
+      <input type="hidden" name="back" value="/ui/anomalies/{{ event.id }}">
+      <button>Onayla</button>
+    </form>
+    {% endif %}
+    {% if event.status != 'resolved' %}
+    <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status">
+      <input type="hidden" name="status" value="resolved">
+      <input type="hidden" name="back" value="/ui/anomalies/{{ event.id }}">
+      <button class="primary">Çözüldü olarak işaretle</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+  <div class="kpi accent-amber">
+    <div class="label">Sapma</div>
+    <div class="value" style="color:{{ deviation_color }}">
+      {{ "%.1f"|format(event.deviation_pct) }}<small>%</small></div>
+  </div>
+  <div class="kpi accent-blue">
+    <div class="label">Başlangıç (TRT)</div>
+    <div class="value" style="font-size:18px">{{ started_local }}</div>
+    <div class="trend">{{ time_ago }}</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Süre</div>
+    <div class="value" style="font-size:18px">{{ duration_label }}</div>
+    <div class="trend">{{ 'devam ediyor' if not event.ended_at else 'çözüldü' }}</div>
+  </div>
+</div>
+
+{% if evidence_rows %}
+<h2>Kanıt</h2>
+<div class="card">
+<table>
+  <tr><th>Alan</th><th>Değer</th></tr>
+  {% for k, v in evidence_rows %}
+  <tr><td>{{ k }}</td><td class="num">{{ v }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if chart %}
+<h2>Olay penceresi ({{ window_label }})</h2>
+<div class="chart-wrap">{{ chart | safe }}</div>
+<p class="note">Olayın başlangıcından ±3 saatlik pencere; kırmızı dikey çizgi olayın
+tetiklendiği anı gösterir.</p>
+{% endif %}
+{% endblock %}

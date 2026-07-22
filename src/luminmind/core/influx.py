@@ -160,6 +160,29 @@ from(bucket: "{bucket}")
                 ts = record.get_time()
                 totals[ts] = totals.get(ts, 0.0) + float(record.get_value())
         return sorted(totals.items())
+    async def query_device_series(
+        self,
+        vendor_plant_id: str,
+        vendor_device_id: str,
+        metric: str,
+        start: datetime,
+        stop: datetime,
+    ) -> list[tuple[datetime, float]]:
+        """Tek cihaz + tek metrik serisi (15 dk çözünürlük)."""
+        flux = f"""
+from(bucket: "{BUCKET_RAW}")
+  |> range(start: {start.isoformat()}, stop: {stop.isoformat()})
+  |> filter(fn: (r) => r._measurement == "{MEASUREMENT_RAW}")
+  |> filter(fn: (r) => r.plant_id == "{vendor_plant_id}")
+  |> filter(fn: (r) => r.inverter_id == "{vendor_device_id}")
+  |> filter(fn: (r) => r._field == "{metric}")
+"""
+        tables = await self._client.query_api().query(flux)
+        points: list[tuple[datetime, float]] = []
+        for table in tables:
+            for record in table.records:
+                points.append((record.get_time(), float(record.get_value())))
+        return sorted(points)
 
     async def query_twin_window(
         self, start: datetime, stop: datetime

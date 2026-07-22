@@ -11,7 +11,7 @@ from luminmind.api.main import create_app
 from luminmind.config import Settings
 from luminmind.core.aggregate import RawSample
 from luminmind.core.db import session_scope
-from luminmind.core.models import AnomalyEvent, Base, Plant, User
+from luminmind.core.models import AnomalyEvent, Base, Inverter, Plant, User
 from luminmind.scripts.seed import seed
 from luminmind.web.charts import Series, line_chart, price_plan_chart
 from luminmind.workers.tasks.arbitrage import run_arbitrage
@@ -24,6 +24,12 @@ NOW = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
 class FakeTsSource:
     async def query_plant_series(self, vendor_plant_id, metric, start, stop, resolution="15m"):
         return [(NOW - timedelta(minutes=15), 480.0), (NOW, 520.0)]
+
+    async def query_device_series(
+        self, vendor_plant_id, vendor_device_id, metric, start, stop
+    ):
+        base = 100.0 if metric == "ac_power_kw" else 45.0
+        return [(NOW - timedelta(minutes=15), base), (NOW, base + 20)]
 
     async def query_raw_window(self, start, stop):
         return [
@@ -295,6 +301,90 @@ async def test_map_uses_new_amber_marker(client):
     assert response.status_code == 200
     assert "leaflet" in response.text.lower()
     assert "#f2b544" in response.text  # yeni amber palet
+
+
+async def test_inverter_detail_page(client, engine):
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        session.add(Inverter(
+            plant_id=plant.id, vendor_device_id="99",
+            model="Test Inv", ac_capacity_kw=250.0,
+            last_seen_at=NOW, last_power_kw=142.3, last_temp_c=48.0,
+            last_error_code="0", last_status="AKTIF",
+        ))
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+
+    response = await client.get(f"/ui/plants/{plant.id}/inverters/99")
+    assert response.status_code == 200
+    assert "İnvertör 99" in response.text
+    assert "Üretiyor" in response.text
+    assert "142" in response.text
+    assert "48" in response.text
+    # iki grafik + KPI şeridi
+    assert response.text.count("<svg") >= 2
+
+
+async def test_inverter_detail_404_for_unknown_device(client, engine):
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.get(f"/ui/plants/{plant.id}/inverters/yok")
+    assert response.status_code == 404
+
+
+async def test_anomaly_detail_page_and_evidence(client, engine):
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        session.add(AnomalyEvent(
+            plant_id=plant.id, kind="shading", severity="critical",
+            deviation_pct=-18.4, started_at=NOW - timedelta(hours=2),
+            status="open",
+            evidence={"band_hours_utc": "[7, 8, 9]", "band_median_pct": "-18.4"},
+        ))
+    async with session_scope(engine) as session:
+        event = (await session.scalars(select(AnomalyEvent))).one()
+
+    response = await client.get(f"/ui/anomalies/{event.id}")
+    assert response.status_code == 200
+    assert "Gölgelenme" in response.text
+    assert "Kritik" in response.text
+    assert "-18.4" in response.text
+    # Evidence tablosu okunabilir başlıkla geldi
+    assert "Bant saatleri (UTC)" in response.text
+    assert "Bant medyan" in response.text
+
+
+async def test_anomaly_detail_action_resolves_open_event(client, engine):
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        session.add(AnomalyEvent(
+            plant_id=plant.id, kind="soiling", severity="warning",
+            deviation_pct=-6.5, started_at=NOW - timedelta(hours=1),
+            status="open", evidence={},
+        ))
+    async with session_scope(engine) as session:
+        event = (await session.scalars(select(AnomalyEvent))).one()
+
+    action = await client.post(
+        f"/ui/anomalies/{event.id}/status",
+        data={"status": "resolved", "back": f"/ui/anomalies/{event.id}"},
+    )
+    assert action.status_code == 303
+
+    async with session_scope(engine) as session:
+        updated = (await session.scalars(select(AnomalyEvent))).one()
+        assert updated.status == "resolved"
+
+
+async def test_anomaly_detail_404(client):
+    await do_login(client)
+    import uuid as _uuid
+    response = await client.get(f"/ui/anomalies/{_uuid.uuid4()}")
+    assert response.status_code == 404
 
 
 async def test_logout_clears_session(client):

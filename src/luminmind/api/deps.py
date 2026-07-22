@@ -26,6 +26,11 @@ class TimeseriesSource(Protocol):
         resolution: str = "15m",
     ) -> list[tuple[datetime, float]]: ...
 
+    async def query_device_series(
+        self, vendor_plant_id: str, vendor_device_id: str,
+        metric: str, start: datetime, stop: datetime,
+    ) -> list[tuple[datetime, float]]: ...
+
     async def query_raw_window(self, start: datetime, stop: datetime) -> list[RawSample]: ...
 
     async def query_twin_window(

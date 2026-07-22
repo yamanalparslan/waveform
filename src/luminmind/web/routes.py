@@ -29,6 +29,7 @@ from luminmind.core.models import (
     AnomalyEvent,
     ArbitragePlan,
     BatterySystem,
+    Inverter,
     Plant,
     PvArray,
     User,
@@ -133,6 +134,13 @@ async def sidebar_plants_context(
         {"id": p.id, "name": p.name, "open_anomalies": counts.get(p.id, 0)}
         for p in plants
     ], list(plants)
+
+
+def _as_utc(ts: datetime | None) -> datetime | None:
+    """SQLite gibi tz-naive tutan sürücülerden dönen damgayı UTC olarak yorumlar."""
+    if ts is None:
+        return None
+    return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
 
 
 def _time_ago_tr(ts: datetime) -> str:
@@ -443,8 +451,12 @@ def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
         temp_color = "var(--text)"
 
         if inv.last_seen_at is not None:
-            age = now - inv.last_seen_at
-            last_seen_local = inv.last_seen_at.astimezone(TRT).strftime("%d.%m %H:%M")
+            last_seen = (
+                inv.last_seen_at.replace(tzinfo=UTC)
+                if inv.last_seen_at.tzinfo is None else inv.last_seen_at
+            )
+            age = now - last_seen
+            last_seen_local = last_seen.astimezone(TRT).strftime("%d.%m %H:%M")
             if age > STALE_AFTER:
                 health_chip, health_label = "crit", "Çevrimdışı"
             else:
@@ -491,7 +503,263 @@ def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
     return rows
 
 
+# ------------------------------ Inverter detail ------------------------------
+
+
+@router.get("/plants/{plant_id}/inverters/{device_id}", response_class=HTMLResponse)
+async def inverter_detail(
+    request: Request,
+    plant_id: uuid.UUID,
+    device_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_web_user)],
+) -> HTMLResponse:
+    from luminmind.analytics.inverter_health import (
+        CRITICAL_OVERHEAT_C,
+        KIND_INV_ERROR,
+        KIND_INV_OFFLINE,
+        KIND_INV_OVERHEAT,
+        OVERHEAT_C,
+    )
+
+    plant = await _load_plant(session, plant_id)
+    inverter = (
+        await session.scalars(
+            select(Inverter).where(
+                Inverter.plant_id == plant.id, Inverter.vendor_device_id == device_id
+            )
+        )
+    ).one_or_none()
+    if inverter is None:
+        raise HTTPException(status_code=404, detail="inverter not found")
+
+    day = _parse_day(request.query_params.get("date"), datetime.now(tz=TRT).date())
+    start, stop = _trt_day_window(day)
+
+    influx = request.app.state.influx
+    power_points: list[tuple[datetime, float]] = []
+    temp_points: list[tuple[datetime, float]] = []
+    if influx is not None:
+        power_points = await influx.query_device_series(
+            plant.vendor_plant_id, device_id, "ac_power_kw", start, stop
+        )
+        temp_points = await influx.query_device_series(
+            plant.vendor_plant_id, device_id, "temp_c", start, stop
+        )
+
+    peak_power = max((v for _, v in power_points), default=0.0)
+    energy_kwh = sum(v for _, v in power_points) * 0.25 if power_points else 0.0
+
+    # Sağlık rozeti — plant_detail'daki mantıkla aynı, tek satır için
+    rows = _build_inverter_rows([inverter])
+    health = {
+        "chip": rows[0]["health_chip"] if rows else "muted",
+        "label": rows[0]["health_label"] if rows else "Beklemede",
+    }
+
+    temp_color = "var(--text)"
+    if inverter.last_temp_c is not None:
+        if inverter.last_temp_c > CRITICAL_OVERHEAT_C:
+            temp_color = "var(--coral)"
+        elif inverter.last_temp_c > OVERHEAT_C:
+            temp_color = "var(--amber)"
+
+    last_seen_local = "veri yok"
+    if inverter.last_seen_at is not None:
+        _ls = (
+            inverter.last_seen_at.replace(tzinfo=UTC)
+            if inverter.last_seen_at.tzinfo is None else inverter.last_seen_at
+        )
+        last_seen_local = _ls.astimezone(TRT).strftime("%d.%m %H:%M")
+    kpis = {
+        "last_power": (
+            f"{inverter.last_power_kw:.1f}" if inverter.last_power_kw is not None else "—"
+        ),
+        "last_seen": last_seen_local,
+        "peak_power": _fmt_int(peak_power) if peak_power else "—",
+        "energy_kwh": _fmt_int(energy_kwh) if energy_kwh else "—",
+        "last_temp": f"{inverter.last_temp_c:.1f}" if inverter.last_temp_c is not None else "—",
+        "temp_color": temp_color,
+        "temp_hot": inverter.last_temp_c is not None and inverter.last_temp_c > OVERHEAT_C,
+    }
+
+    # Cihaza dair son 10 olay (evidence.device_id eşleşen)
+    all_events = (
+        await session.scalars(
+            select(AnomalyEvent)
+            .where(
+                AnomalyEvent.plant_id == plant.id,
+                AnomalyEvent.kind.in_({KIND_INV_OFFLINE, KIND_INV_OVERHEAT, KIND_INV_ERROR}),
+            )
+            .order_by(AnomalyEvent.started_at.desc())
+            .limit(50)
+        )
+    ).all()
+    device_events = []
+    for e in all_events:
+        if str(e.evidence.get("device_id", "")) != device_id:
+            continue
+        from luminmind.analytics.inverter_health import DEVICE_KIND_LABELS
+        device_events.append({
+            "kind_label": DEVICE_KIND_LABELS.get(e.kind, e.kind),
+            "severity_label": SEVERITY_LABELS.get(e.severity, e.severity),
+            "severity_chip": "crit" if e.severity == "critical" else "warn",
+            "status_label": STATUS_LABELS.get(e.status, e.status),
+            "status_chip": STATUS_CHIP.get(e.status, "muted"),
+            "started_local": (
+                # started_at NOT NULL, _as_utc None dönmez
+                _as_utc(e.started_at).astimezone(TRT).strftime("%d.%m.%Y %H:%M")  # type: ignore[union-attr]
+            ),
+        })
+        if len(device_events) >= 10:
+            break
+
+    sidebar_plants, _ = await sidebar_plants_context(session)
+    return templates.TemplateResponse(
+        request,
+        "inverter_detail.html",
+        {
+            "user": user,
+            "section": "plant",
+            "plant": plant,
+            "sidebar_plants": sidebar_plants,
+            "plant_open_anomalies": await _open_anomaly_count(session, plant.id),
+            "device_id": device_id,
+            "inverter": inverter,
+            "day_str": day.isoformat(),
+            "kpis": kpis,
+            "health": health,
+            "power_chart": line_chart(
+                [Series("Güç", "#f2b544", power_points)], TRT, unit="kW"
+            ),
+            "temp_chart": line_chart(
+                [Series("Sıcaklık", "#5aa1e3", temp_points)], TRT, unit="°C"
+            ),
+            "device_events": device_events,
+            "page_title": f"{plant.name} · İnvertör {device_id}",
+            "auto_refresh_s": 60,
+        },
+    )
+
+
 # ------------------------------ Anomalies ------------------------------
+
+
+@router.get("/anomalies/{anomaly_id}", response_class=HTMLResponse)
+async def anomaly_detail(
+    request: Request,
+    anomaly_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_web_user)],
+) -> HTMLResponse:
+    from luminmind.analytics.inverter_health import DEVICE_KIND_LABELS
+
+    event = await session.get(AnomalyEvent, anomaly_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="anomaly not found")
+    plant = await session.get(Plant, event.plant_id)
+    if plant is None:
+        raise HTTPException(status_code=404, detail="plant not found")
+
+    kind_label = KIND_LABELS.get(event.kind) or DEVICE_KIND_LABELS.get(event.kind, event.kind)
+    device_id = event.evidence.get("device_id") if isinstance(event.evidence, dict) else None
+
+    # SQLite gibi tz-naive tutan sürücülerde damgayı UTC olarak yorumla
+    started_at = (
+        event.started_at.replace(tzinfo=UTC) if event.started_at.tzinfo is None
+        else event.started_at
+    )
+    ended_at = event.ended_at
+    if ended_at is not None and ended_at.tzinfo is None:
+        ended_at = ended_at.replace(tzinfo=UTC)
+    started_local = started_at.astimezone(TRT).strftime("%d.%m.%Y %H:%M")
+    ended = ended_at or datetime.now(tz=UTC)
+    duration_s = int((ended - started_at).total_seconds())
+    if duration_s < 60:
+        duration_label = f"{duration_s} sn"
+    elif duration_s < 3600:
+        duration_label = f"{duration_s // 60} dk"
+    elif duration_s < 86400:
+        duration_label = f"{duration_s // 3600} sa {(duration_s % 3600) // 60} dk"
+    else:
+        duration_label = f"{duration_s // 86400} gün {(duration_s % 86400) // 3600} sa"
+
+    # Kanıt tablosu — evidence dict'ini okunabilir sıraya çevir
+    evidence_rows: list[tuple[str, str]] = []
+    if isinstance(event.evidence, dict):
+        friendly = {
+            "device_id": "Cihaz",
+            "temp_c": "Sıcaklık (°C)",
+            "threshold_c": "Eşik (°C)",
+            "minutes_since_last": "Son veriden bu yana (dk)",
+            "error_code": "Hata kodu",
+            "status": "Durum",
+            "step_delta_pct": "Basamak farkı (%)",
+            "before_median_pct": "Öncesi medyan (%)",
+            "after_median_pct": "Sonrası medyan (%)",
+            "band_hours_utc": "Bant saatleri (UTC)",
+            "band_median_pct": "Bant medyan (%)",
+            "recurring_days": "Tekrarlayan günler",
+            "median_pct": "Medyan sapma (%)",
+            "mad_pct": "MAD (%)",
+        }
+        for k, v in event.evidence.items():
+            evidence_rows.append((friendly.get(k, k), str(v)))
+
+    # Olay penceresi grafiği — cihaz varsa cihaz serisi, yoksa tesis toplamı
+    chart_html = ""
+    window_label = ""
+    influx = request.app.state.influx
+    if influx is not None:
+        w_start = started_at - timedelta(hours=3)
+        w_stop = started_at + timedelta(hours=3)
+        window_label = (
+            w_start.astimezone(TRT).strftime("%d.%m %H:%M") + " – "
+            + w_stop.astimezone(TRT).strftime("%H:%M")
+        )
+        if device_id:
+            points = await influx.query_device_series(
+                plant.vendor_plant_id, str(device_id), "ac_power_kw", w_start, w_stop
+            )
+        else:
+            points = await influx.query_plant_series(
+                plant.vendor_plant_id, "ac_power_kw", w_start, w_stop, "15m"
+            )
+        chart_html = line_chart([Series("Güç", "#f2b544", points)], TRT, unit="kW")
+
+    deviation_color = "var(--text)"
+    if event.deviation_pct <= -15:
+        deviation_color = "var(--coral)"
+    elif event.deviation_pct <= -5:
+        deviation_color = "var(--amber)"
+
+    sidebar_plants, _ = await sidebar_plants_context(session)
+    return templates.TemplateResponse(
+        request,
+        "anomaly_detail.html",
+        {
+            "user": user,
+            "section": "anomalies",
+            "plant": plant,
+            "sidebar_plants": sidebar_plants,
+            "plant_open_anomalies": await _open_anomaly_count(session, plant.id),
+            "event": event,
+            "kind_label": kind_label,
+            "severity_label": SEVERITY_LABELS.get(event.severity, event.severity),
+            "severity_chip": "crit" if event.severity == "critical" else "warn",
+            "status_label": STATUS_LABELS.get(event.status, event.status),
+            "status_chip": STATUS_CHIP.get(event.status, "muted"),
+            "device_id": device_id,
+            "started_local": started_local,
+            "time_ago": _time_ago_tr(started_at),
+            "duration_label": duration_label,
+            "evidence_rows": evidence_rows,
+            "chart": chart_html,
+            "window_label": window_label,
+            "deviation_color": deviation_color,
+            "page_title": f"{plant.name} · {kind_label}",
+        },
+    )
 
 
 @router.get("/plants/{plant_id}/anomalies", response_class=HTMLResponse)
@@ -516,7 +784,10 @@ async def anomalies_page(
             "severity": e.severity,
             "deviation_pct": e.deviation_pct,
             "status": e.status,
-            "started_local": e.started_at.astimezone(TRT).strftime("%d.%m.%Y %H:%M"),
+            "started_local": (
+                # started_at NOT NULL, _as_utc None dönmez
+                _as_utc(e.started_at).astimezone(TRT).strftime("%d.%m.%Y %H:%M")  # type: ignore[union-attr]
+            ),
         }
         for e in events
     ]
