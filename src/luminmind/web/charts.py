@@ -135,15 +135,26 @@ def line_chart(
     for s in series:
         if not s.points:
             continue
-        coords = " ".join(
-            f"{_scale(ts.timestamp(), t_min, t_max, x0, x1):.1f},"
-            f"{_scale(v, 0.0, v_max, y0, y1):.1f}"
+        pts_scaled = [
+            (
+                _scale(ts.timestamp(), t_min, t_max, x0, x1) if t_max > t_min
+                else (x0 + x1) / 2,
+                _scale(v, 0.0, v_max, y0, y1),
+            )
             for ts, v in sorted(s.points)
-        )
-        parts.append(
-            f'<polyline points="{coords}" fill="none" stroke="{s.color}" '
-            f'stroke-width="2"/>'
-        )
+        ]
+        if len(pts_scaled) >= 2:
+            coords = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts_scaled)
+            parts.append(
+                f'<polyline points="{coords}" fill="none" stroke="{s.color}" '
+                f'stroke-width="2"/>'
+            )
+        # az nokta okunaksız — her noktaya marker koy (tek nokta da görünsün)
+        if len(pts_scaled) <= 12:
+            for x, y in pts_scaled:
+                parts.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{s.color}"/>'
+                )
     # gösterge (legend)
     legend_x = x0
     for s in series:

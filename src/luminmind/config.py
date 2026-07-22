@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
-    ingestion_interval_minutes: int = 15
+    ingestion_interval_minutes: int = 5
 
     # Üretici API'leri — mock modda gerçek kimlik bilgisi gerekmez
     lm_use_mock_vendors: bool = True

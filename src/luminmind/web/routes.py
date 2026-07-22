@@ -113,8 +113,13 @@ async def sidebar_plants_context(
 ) -> tuple[list[dict[str, Any]], list[Plant]]:
     """Sol menüde listelenecek tesisleri ve açık anomali sayaçlarını döndürür.
 
-    Bir liste (görüntüleme için sözlükler) + ham Plant listesi döner; ikincisi
-    çağıran route'ların ilk-tesis vb. seçim yapmasına yarar.
+    Aynı üst başlığı paylaşan tesisleri (ör. "Tescom İzmir GES · Mekanik" ve
+    "Tescom İzmir GES · Uretim") tek bir grup altında toplar. Üst başlık ile
+    birebir eşleşen bir tesis varsa (eski tekil kayıt) grup başlığı ona
+    tıklanabilir olur; yoksa yalnızca ayraç metni olarak görünür.
+
+    Her giriş `{id, name, open_anomalies, children, is_group}` biçimindedir.
+    Alt tesisler `children` içinde aynı şemayla listelenir.
     """
     plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
     if not plants:
@@ -130,10 +135,46 @@ async def sidebar_plants_context(
         )
     ).all()
     counts = {row[0]: row[1] for row in counts_rows}
-    return [
-        {"id": p.id, "name": p.name, "open_anomalies": counts.get(p.id, 0)}
-        for p in plants
-    ], list(plants)
+
+    # "Ana · Alt" biçimindeki isimleri grupla; ayraç yoksa tek başına listele.
+    groups: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for p in plants:
+        head, sep, tail = p.name.partition(" · ")
+        key = head
+        if key not in groups:
+            groups[key] = {"parent": None, "children": []}
+            order.append(key)
+        entry = {
+            "id": p.id,
+            "name": tail if sep else p.name,
+            "open_anomalies": counts.get(p.id, 0),
+        }
+        if sep:
+            groups[key]["children"].append(entry)
+        else:
+            groups[key]["parent"] = {
+                "id": p.id,
+                "name": p.name,
+                "open_anomalies": counts.get(p.id, 0),
+            }
+
+    sidebar: list[dict[str, Any]] = []
+    for key in order:
+        g = groups[key]
+        if g["children"]:
+            child_alerts = sum(c["open_anomalies"] for c in g["children"])
+            parent = g["parent"] or {"id": None, "name": key, "open_anomalies": 0}
+            sidebar.append({
+                "id": parent["id"],
+                "name": key,
+                "open_anomalies": parent["open_anomalies"] + child_alerts,
+                "children": g["children"],
+                "is_group": True,
+            })
+        elif g["parent"] is not None:
+            sidebar.append({**g["parent"], "children": [], "is_group": False})
+    return sidebar, list(plants)
 
 
 def _as_utc(ts: datetime | None) -> datetime | None:

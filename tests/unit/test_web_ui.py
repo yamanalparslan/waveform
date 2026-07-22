@@ -295,6 +295,31 @@ async def test_users_page_admin_can_create(client, engine):
         assert u.role == "viewer"
 
 
+async def test_sidebar_groups_plants_with_dot_separator(client, engine):
+    """`X · A`, `X · B` sidebar'da tek başlık altında toplanmalı."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        session.add(Plant(
+            name="Tescom İzmir GES · Mekanik", vendor="tescom",
+            vendor_plant_id="tescom-izmir-mekanik",
+            owner_id=(await session.scalars(select(User))).first().id,
+        ))
+        session.add(Plant(
+            name="Tescom İzmir GES · Uretim", vendor="tescom",
+            vendor_plant_id="tescom-izmir-uretim",
+            owner_id=(await session.scalars(select(User))).first().id,
+        ))
+
+    response = await client.get("/ui")
+    body = response.text
+    # başlık tek: "Tescom İzmir GES", altları alt öğe olarak "Mekanik" ve "Uretim"
+    assert "plant-group" in body
+    assert "plant-child" in body
+    # "Mekanik" adı child olarak listelendi
+    assert ">Mekanik<" in body or "Mekanik" in body
+    assert "Uretim" in body
+
+
 async def test_map_uses_new_amber_marker(client):
     await do_login(client)
     response = await client.get("/ui/harita")

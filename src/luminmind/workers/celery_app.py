@@ -30,7 +30,7 @@ app.conf.update(
 app.conf.beat_schedule = {
     "ingest-all-plants": {
         "task": "luminmind.ingest_all_plants",
-        # 15 dk'lık üretici verisi aralığıyla hizalı (PLAN.md Faz 1)
+        # Üreticiden 5 dk aralıklarla çekim — Tescom yerel API'si anlık veriyi tazeliyor
         "schedule": crontab(minute=f"*/{settings.ingestion_interval_minutes}"),
     },
     "compute-expected-generation": {
