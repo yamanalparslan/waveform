@@ -495,9 +495,11 @@ async def plant_detail(
         if actual:
             series.append(Series("Gerçek", "#f2b544", sorted(actual.items())))
             peak_kw = max(actual.values())
-            energy_kwh = sum(actual.values()) * 0.25
+            # plant_actual_from_samples 5 dk bucket üretir → kWh = sum(kw) × 5/60
+            energy_kwh = sum(actual.values()) * (5.0 / 60.0)
         if expected:
             series.append(Series("Beklenen", "#5aa1e3", sorted(expected.items())))
+            # Twin (Open-Meteo) hâlâ 15 dk çözünürlükte → sum(kw) × 15/60
             expected_kwh = sum(expected.values()) * 0.25
 
     pr = 0.0
@@ -1180,7 +1182,8 @@ async def _load_daily_report(
             exp = expected.get(p.vendor_plant_id, {})
             if not actual and not exp:
                 continue
-            energy = sum(actual.values()) * 0.25
+            # actual 5 dk bucket (plant_actual_from_samples), expected 15 dk (twin)
+            energy = sum(actual.values()) * (5.0 / 60.0)
             expected_kwh = sum(exp.values()) * 0.25
             peak = max(actual.values()) if actual else 0.0
             pr = (
