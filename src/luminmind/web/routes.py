@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from luminmind.analytics.comparison import plant_actual_from_samples
@@ -1353,6 +1353,83 @@ def _opt_float(value: str | None) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+@router.get("/tesisler", response_class=HTMLResponse)
+async def plants_manage_page(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+    error: str | None = None,
+    success: str | None = None,
+) -> HTMLResponse:
+    """Tesis yönetimi — tüm tesisleri listele, düzenle/sil linklerini göster."""
+    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    inv_counts_rows = (
+        await session.execute(
+            select(Inverter.plant_id, func.count()).group_by(Inverter.plant_id)
+        )
+    ).all()
+    inv_counts = {row[0]: row[1] for row in inv_counts_rows}
+    plant_rows = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "vendor": p.vendor,
+            "vendor_plant_id": p.vendor_plant_id,
+            "capacity_label": (
+                f"{_fmt_1(p.dc_capacity_kwp)} kWp"
+                if p.dc_capacity_kwp
+                else "—"
+            ),
+            "inv_count": inv_counts.get(p.id, 0),
+            "coord_label": (
+                f"{p.latitude:.3f}, {p.longitude:.3f}"
+                if p.latitude is not None and p.longitude is not None
+                else "—"
+            ),
+        }
+        for p in plants
+    ]
+    sidebar_plants, _ = await sidebar_plants_context(session)
+    return templates.TemplateResponse(
+        request,
+        "plants_manage.html",
+        {
+            "user": user,
+            "section": "plants-manage",
+            "plant": None,
+            "sidebar_plants": sidebar_plants,
+            "plants": plant_rows,
+            "error": error, "success": success,
+            "page_title": "Tesis yönetimi",
+        },
+    )
+
+
+@router.post("/tesisler/{plant_id}/sil")
+async def plant_delete(
+    plant_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> Response:
+    """Tesisi kaskad olarak siler — invertörler, PV dizileri, BESS, kimlik bilgisi ve
+    anomali olayları da otomatik silinir (cascade). Influx'taki geçmiş veri kalır."""
+    plant = await session.get(Plant, plant_id)
+    if plant is None:
+        return RedirectResponse(
+            "/ui/tesisler?error=" + quote("Tesis bulunamadı"), status_code=303
+        )
+    # AnomalyEvent'lerde cascade yok — elle temizle
+    await session.execute(
+        delete(AnomalyEvent).where(AnomalyEvent.plant_id == plant_id)
+    )
+    plant_name = plant.name
+    await session.delete(plant)
+    return RedirectResponse(
+        "/ui/tesisler?success=" + quote(f"'{plant_name}' silindi"),
+        status_code=303,
+    )
 
 
 @router.get("/tesisler/yeni", response_class=HTMLResponse)

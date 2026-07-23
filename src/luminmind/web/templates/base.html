@@ -272,6 +272,8 @@ body.centered{display:grid; place-items:center; padding:24px}
       {% if user.role == 'admin' %}
       <div class="divider"></div>
       <div class="section-label">Yönetim</div>
+      <a href="/ui/tesisler" class="{{ 'active' if section == 'plants-manage' }}">
+        <span class="icn">◱</span> Tesisler</a>
       <a href="/ui/tesisler/yeni" class="{{ 'active' if section == 'plant-new' }}">
         <span class="icn">+</span> Tesis Ekle</a>
       <a href="/ui/kullanicilar" class="{{ 'active' if section == 'users' }}">

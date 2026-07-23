@@ -379,6 +379,57 @@ async def test_sidebar_groups_plants_with_dot_separator(client, engine):
     assert ">Uretim<" in body
 
 
+async def test_plants_manage_page_lists_plants(client, engine):
+    """Tesis yönetimi sayfası tüm tesisleri, kapasitelerini ve düzenle/sil butonlarını gösterir."""
+    await do_login(client)
+    response = await client.get("/ui/tesisler")
+    assert response.status_code == 200
+    assert "Konya GES" in response.text
+    assert "Düzenle" in response.text
+    assert "Sil" in response.text
+    # her satırda sil form'u post yapıyor
+    assert "/tesisler/" in response.text and "/sil" in response.text
+
+
+async def test_plant_delete_removes_from_db(client, engine):
+    """POST /tesisler/{id}/sil tesisi ve invertörlerini gerçekten siler."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        plant_id = plant.id
+        # Bir invertör ekleyelim ki cascade doğrulanabilsin
+        session.add(Inverter(
+            plant_id=plant_id, vendor_device_id="del-test",
+            model="Test", ac_capacity_kw=100.0,
+        ))
+    response = await client.post(f"/ui/tesisler/{plant_id}/sil")
+    assert response.status_code == 303
+    assert "success=" in response.headers["location"]
+    async with session_scope(engine) as session:
+        assert (await session.get(Plant, plant_id)) is None
+        # invertör de silindi (cascade)
+        remaining = (await session.scalars(
+            select(Inverter).where(Inverter.vendor_device_id == "del-test")
+        )).one_or_none()
+        assert remaining is None
+
+
+async def test_plant_delete_requires_admin(client, engine):
+    """viewer rolündeki kullanıcı tesis silemez."""
+    async with session_scope(engine) as session:
+        from luminmind.core.security import hash_password
+        session.add(User(
+            email="v@luminmind.local",
+            hashed_password=hash_password("vpass"),
+            role="viewer",
+        ))
+    await do_login(client, email="v@luminmind.local", password="vpass")
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(f"/ui/tesisler/{plant.id}/sil")
+    assert response.status_code == 403
+
+
 async def test_map_uses_new_amber_marker(client):
     await do_login(client)
     response = await client.get("/ui/harita")
