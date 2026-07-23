@@ -130,6 +130,10 @@ async def test_plant_detail_renders_svg_chart(client, engine):
     assert "Sıcaklık-düzeltmeli PR" in response.text
     assert "Kayıp şelalesi" in response.text
     assert "Teorik (POA)" in response.text
+    # Gün-öncesi üretim tahmini bölümü
+    assert "Yarının üretim tahmini" in response.text
+    assert "Tahmini üretim" in response.text
+    assert "Tahmini gelir" in response.text
 
 
 async def test_anomalies_page_and_status_action(client, engine):

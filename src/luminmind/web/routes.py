@@ -466,6 +466,79 @@ async def _open_anomaly_count(session: AsyncSession, plant_id: uuid.UUID) -> int
     return int(result.scalar() or 0)
 
 
+async def _forecast_revenue(
+    points: list[tuple[datetime, float]], day: date, settings: Settings
+) -> float:
+    """Tahmini üretimi GÖP fiyatlarıyla çarpıp yaklaşık günlük gelir verir (TL).
+
+    Fiyat kaynağı arbitrajla aynı: mock modda temsili profil, aksi hâlde EPİAŞ.
+    """
+    from luminmind.analytics.arbitrage.epias import EpiasClient
+    from luminmind.analytics.arbitrage.mock_prices import MockPriceProvider
+
+    client: EpiasClient | None = None
+    if settings.lm_use_mock_prices or not settings.epias_base_url:
+        provider: Any = MockPriceProvider()
+    else:
+        client = EpiasClient(base_url=settings.epias_base_url)
+        provider = client
+    try:
+        slots = await provider.fetch_day_ahead_prices(day)
+    except Exception:
+        logger.exception("forecast revenue: price fetch failed")
+        return 0.0
+    finally:
+        if client is not None:
+            await client.aclose()
+
+    def _hour(ts: datetime) -> datetime:
+        return ts.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+
+    price_by_hour = {_hour(s.start): s.price_try_mwh for s in slots}
+    revenue = 0.0
+    for ts, kw in points:
+        energy_mwh = kw * 0.25 / 1000.0  # 15 dk dilim
+        revenue += energy_mwh * price_by_hour.get(_hour(ts), 0.0)
+    return revenue
+
+
+async def _plant_forecast(
+    influx: Any,
+    plant: Plant,
+    children: "Sequence[Plant]",
+    is_parent: bool,
+    settings: Settings,
+) -> tuple[dict[str, str] | None, str]:
+    """Yarının üretim tahminini (twin_expected, gelecek gün) döndürür + gelir tahmini."""
+    if influx is None:
+        return None, ""
+    tomorrow = (datetime.now(tz=TRT) + timedelta(days=1)).date()
+    fstart, fstop = _trt_day_window(tomorrow)
+    twin = await influx.query_twin_window(fstart, fstop)
+    forecast: dict[datetime, float] = {}
+    if is_parent:
+        for c in children:
+            for t, v in twin.get(c.vendor_plant_id, {}).items():
+                forecast[t] = forecast.get(t, 0.0) + v
+    else:
+        forecast = dict(twin.get(plant.vendor_plant_id, {}))
+    if not forecast:
+        return None, ""
+
+    pts = sorted(forecast.items())
+    f_energy = sum(v for _, v in pts) * 0.25
+    f_peak = max(v for _, v in pts)
+    revenue = await _forecast_revenue(pts, tomorrow, settings)
+    kpis = {
+        "date": tomorrow.strftime("%d.%m.%Y"),
+        "energy": _fmt_int(f_energy),
+        "peak": _fmt_int(f_peak),
+        "revenue": f"{revenue:,.0f}".replace(",", "."),
+    }
+    chart = line_chart([Series("Tahmin", "#8a7dd6", pts)], TRT, unit="kW")
+    return kpis, chart
+
+
 @router.get("/plants/{plant_id}", response_class=HTMLResponse)
 async def plant_detail(
     request: Request,
@@ -625,6 +698,11 @@ async def plant_detail(
             [(s.label, s.kwh, s.loss_kwh) for s in stages], unit="kWh"
         )
 
+    # Gün-öncesi üretim tahmini (yarın) + tahmini gelir
+    forecast_kpis, forecast_chart = await _plant_forecast(
+        influx, plant, children, is_parent, settings
+    )
+
     sidebar_plants, _ = await sidebar_plants_context(session)
 
     child_sites = []
@@ -651,6 +729,8 @@ async def plant_detail(
             "kpis": kpis,
             "perf_kpis": perf_kpis,
             "waterfall_chart": waterfall_svg,
+            "forecast_kpis": forecast_kpis,
+            "forecast_chart": forecast_chart,
             "production_chart": line_chart(series, TRT, unit="kW"),
             "is_parent": is_parent,
             "child_sites_json": json.dumps(child_sites) if is_parent else "[]",

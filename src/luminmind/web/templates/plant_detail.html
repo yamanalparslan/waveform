@@ -89,6 +89,31 @@ duruş). POA verisi yoksa yalnızca beklenen → saha kaybı → gerçek göster
 {% endif %}
 {% endif %}
 
+{% if forecast_kpis %}
+<h2>Yarının üretim tahmini · {{ forecast_kpis.date }}</h2>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+  <div class="kpi accent-blue">
+    <div class="label">Tahmini üretim</div>
+    <div class="value">{{ forecast_kpis.energy }}<small>kWh</small></div>
+    <div class="trend">dijital ikiz · hava tahmini</div>
+  </div>
+  <div class="kpi accent-amber">
+    <div class="label">Tahmini tepe güç</div>
+    <div class="value">{{ forecast_kpis.peak }}<small>kW</small></div>
+    <div class="trend">gün içi maksimum</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Tahmini gelir</div>
+    <div class="value">{{ forecast_kpis.revenue }}<small>TL</small></div>
+    <div class="trend">GÖP fiyatı × üretim</div>
+  </div>
+</div>
+<div class="chart-wrap">{{ forecast_chart | safe }}</div>
+<p class="note">Gün-öncesi tahmin: pvlib dijital ikizi yarının Open-Meteo hava
+tahminine koşularak hesaplanır. Gelir tahmini, tahmini üretimi saatlik GÖP
+fiyatlarıyla çarpar (arbitraj/dengeleme kararlarına girdi).</p>
+{% endif %}
+
 {% if is_parent and child_sites_json != "[]" %}
 <br>
 <div class="grid split-2">
