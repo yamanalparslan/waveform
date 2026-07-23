@@ -20,7 +20,7 @@ router = APIRouter(prefix="/plants/{plant_id}", tags=["timeseries"])
 
 # Çözünürlük başına geçerli metrikler (Influx measurement field'larıyla eşleşir)
 _METRICS: dict[str, frozenset[str]] = {
-    "5m": frozenset({"ac_power_kw", "dc_power_kw", "temp_c", "energy_total_kwh"}),
+    "15m": frozenset({"ac_power_kw", "dc_power_kw", "temp_c", "energy_total_kwh"}),
     "1h": frozenset({"ac_power_kw_mean", "ac_power_kw_max", "energy_kwh"}),
     "1d": frozenset({"energy_kwh", "peak_ac_power_kw"}),
 }
@@ -36,7 +36,7 @@ async def timeseries(
     start: Annotated[datetime, Query()],
     end: Annotated[datetime, Query()],
     metric: Annotated[str, Query()] = "ac_power_kw",
-    resolution: Annotated[Literal["5m", "1h", "1d"], Query()] = "5m",
+    resolution: Annotated[Literal["15m", "1h", "1d"], Query()] = "15m",
 ) -> list[SeriesPoint]:
     if metric not in _METRICS[resolution]:
         raise HTTPException(

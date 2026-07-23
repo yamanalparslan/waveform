@@ -296,28 +296,34 @@ async def test_users_page_admin_can_create(client, engine):
 
 
 async def test_sidebar_groups_plants_with_dot_separator(client, engine):
-    """`X · A`, `X · B` sidebar'da tek başlık altında toplanmalı."""
+    """Parent kaydı varsa `X · A`, `X · B` onun altında child olarak listelenir."""
     await do_login(client)
     async with session_scope(engine) as session:
+        admin_id = (await session.scalars(select(User))).first().id
+        # Parent tesis (adı child'ların ön ekiyle birebir eşleşmeli)
+        session.add(Plant(
+            name="Tescom İzmir GES", vendor="tescom",
+            vendor_plant_id="tescom-izmir",
+            owner_id=admin_id,
+        ))
         session.add(Plant(
             name="Tescom İzmir GES · Mekanik", vendor="tescom",
             vendor_plant_id="tescom-izmir-mekanik",
-            owner_id=(await session.scalars(select(User))).first().id,
+            owner_id=admin_id,
         ))
         session.add(Plant(
             name="Tescom İzmir GES · Uretim", vendor="tescom",
             vendor_plant_id="tescom-izmir-uretim",
-            owner_id=(await session.scalars(select(User))).first().id,
+            owner_id=admin_id,
         ))
 
     response = await client.get("/ui")
     body = response.text
-    # başlık tek: "Tescom İzmir GES", altları alt öğe olarak "Mekanik" ve "Uretim"
-    assert "plant-group" in body
+    # Parent link + child linkleri hep birlikte görünmeli
+    assert "Tescom İzmir GES" in body
     assert "plant-child" in body
-    # "Mekanik" adı child olarak listelendi
-    assert ">Mekanik<" in body or "Mekanik" in body
-    assert "Uretim" in body
+    assert ">Mekanik<" in body
+    assert ">Uretim<" in body
 
 
 async def test_map_uses_new_amber_marker(client):
@@ -357,6 +363,45 @@ async def test_inverter_detail_404_for_unknown_device(client, engine):
         plant = (await session.scalars(select(Plant))).one()
     response = await client.get(f"/ui/plants/{plant.id}/inverters/yok")
     assert response.status_code == 404
+
+
+async def test_inverter_detail_scopes_to_plant_not_siblings(client, engine):
+    """Aynı `slave_id` iki child'da varsa detay her zaman URL'deki tesise ait olmalı."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        admin = (await session.scalars(select(User))).first()
+        p1 = Plant(
+            owner_id=admin.id, name="X GES · Mekanik",
+            vendor="tescom", vendor_plant_id="x-mekanik",
+        )
+        p2 = Plant(
+            owner_id=admin.id, name="X GES · Uretim",
+            vendor="tescom", vendor_plant_id="x-uretim",
+        )
+        session.add_all([p1, p2])
+        await session.flush()
+        session.add_all([
+            Inverter(
+                plant_id=p1.id, vendor_device_id="1",
+                model="Mekanik-1", ac_capacity_kw=100.0,
+                last_seen_at=datetime.now(tz=UTC), last_power_kw=42.0,
+                last_status="AKTIF", last_error_code="0",
+            ),
+            Inverter(
+                plant_id=p2.id, vendor_device_id="1",
+                model="Uretim-1", ac_capacity_kw=100.0,
+                last_seen_at=datetime.now(tz=UTC), last_power_kw=88.0,
+                last_status="AKTIF", last_error_code="0",
+            ),
+        ])
+    async with session_scope(engine) as session:
+        p1 = (await session.scalars(select(Plant).where(Plant.name == "X GES · Mekanik"))).one()
+        p2 = (await session.scalars(select(Plant).where(Plant.name == "X GES · Uretim"))).one()
+
+    r1 = await client.get(f"/ui/plants/{p1.id}/inverters/1")
+    r2 = await client.get(f"/ui/plants/{p2.id}/inverters/1")
+    assert "Mekanik-1" in r1.text and "Uretim-1" not in r1.text
+    assert "Uretim-1" in r2.text and "Mekanik-1" not in r2.text
 
 
 async def test_anomaly_detail_page_and_evidence(client, engine):

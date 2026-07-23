@@ -81,9 +81,9 @@
     <th style="text-align:right">Son görülme</th>
   </tr>
   {% for r in inverter_rows %}
-  <tr onclick="window.location.href='/ui/plants/{{ plant.id }}/inverters/{{ r.vendor_device_id }}'"
+  <tr onclick="window.location.href='/ui/plants/{{ r.plant_id }}/inverters/{{ r.vendor_device_id }}'"
       style="cursor:pointer">
-    <td class="num"><a href="/ui/plants/{{ plant.id }}/inverters/{{ r.vendor_device_id }}"
+    <td class="num"><a href="/ui/plants/{{ r.plant_id }}/inverters/{{ r.vendor_device_id }}"
       style="color:var(--amber)">{{ r.vendor_device_id }}</a></td>
     <td><span class="chip {{ r.health_chip }}">{{ r.health_label }}</span></td>
     <td class="num" style="text-align:right">{{ r.power }}</td>

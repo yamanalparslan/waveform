@@ -235,16 +235,15 @@ body.centered{display:grid; place-items:center; padding:24px}
       <div class="divider"></div>
       <div class="section-label">Tesisler</div>
       {% for sp in sidebar_plants %}
-      {% set parent_active = plant and (sp.id == plant.id or plant.id in sp.children|map(attribute='id')) %}
+      {% set parent_active = plant and sp.id == plant.id %}
+      {% set child_active = plant and sp.children and plant.id in sp.children|map(attribute='id') %}
       <a href="/ui/plants/{{ sp.id }}"
          class="plant-link {{ 'active' if parent_active }}">
         <span class="icn">▪</span>
         <span class="plant-name">{{ sp.name }}</span>
         {% if sp.open_anomalies %}<span class="badge-count">{{ sp.open_anomalies }}</span>{% endif %}
       </a>
-      
-
-      {% if plant and sp.id == plant.id %}
+      {% if parent_active %}
       <a href="/ui/plants/{{ plant.id }}/anomalies"
          class="sub {{ 'active' if section == 'anomalies' }}">
         <span class="icn">△</span> Anomaliler</a>
@@ -252,15 +251,22 @@ body.centered{display:grid; place-items:center; padding:24px}
          class="sub {{ 'active' if section == 'arbitrage' }}">
         <span class="icn">⇄</span> Arbitraj</a>
       {% endif %}
-      {% if parent_active and sp.children %}
       {% for child in sp.children %}
       <a href="/ui/plants/{{ child.id }}"
-         class="sub {{ 'active' if plant and child.id == plant.id else '' }}">
-        <span class="icn">↳</span> {{ child.short_name }}
+         class="sub plant-child {{ 'active' if plant and child.id == plant.id }}">
+        <span class="icn">↳</span>
+        <span class="plant-name">{{ child.short_name }}</span>
         {% if child.open_anomalies %}<span class="badge-count">{{ child.open_anomalies }}</span>{% endif %}
       </a>
-      {% endfor %}
+      {% if plant and child.id == plant.id %}
+      <a href="/ui/plants/{{ plant.id }}/anomalies"
+         class="sub sub-2 {{ 'active' if section == 'anomalies' }}">
+        <span class="icn">△</span> Anomaliler</a>
+      <a href="/ui/plants/{{ plant.id }}/arbitrage"
+         class="sub sub-2 {{ 'active' if section == 'arbitrage' }}">
+        <span class="icn">⇄</span> Arbitraj</a>
       {% endif %}
+      {% endfor %}
       {% endfor %}
       {% endif %}
       {% if user.role == 'admin' %}

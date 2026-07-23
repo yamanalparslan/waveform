@@ -120,7 +120,7 @@ async def run_twin(
     try:
         all_points: list[TwinPoint] = []
         for config in configs:
-            samples = await weather_client.fetch_day_5m(
+            samples = await weather_client.fetch_day_15m(
                 config.latitude, config.longitude, target_day
             )
             points = expected_generation(config, weather_to_frame(samples))

@@ -136,18 +136,18 @@ async def sidebar_plants_context(
     ).all()
     counts = {row[0]: row[1] for row in counts_rows}
     plants_by_name = {p.name: p for p in plants}
-    plant_items = {}
-    
+    plant_items: dict[uuid.UUID, dict[str, Any]] = {}
+
     for p in plants:
         plant_items[p.id] = {
-            "id": p.id, 
-            "name": p.name, 
+            "id": p.id,
+            "name": p.name,
             "short_name": p.name.split(" · ")[-1] if " · " in p.name else p.name,
             "open_anomalies": counts.get(p.id, 0),
-            "children": []
+            "children": [],
         }
-        
-    top_level = []
+
+    top_level: list[dict[str, Any]] = []
     for p in plants:
         if " · " in p.name:
             parent_name = p.name.split(" · ")[0]
@@ -156,6 +156,10 @@ async def sidebar_plants_context(
                 plant_items[parent_id]["children"].append(plant_items[p.id])
                 continue
         top_level.append(plant_items[p.id])
+
+    # Parent rozet sayacına child'ların açık anomali sayısını da yay.
+    for item in top_level:
+        item["open_anomalies"] += sum(c["open_anomalies"] for c in item["children"])
 
     return top_level, list(plants)
 
@@ -277,14 +281,14 @@ async def overview(
                 combined_series = {}
                 for child in children:
                     child_series = await influx.query_plant_series(
-                        child.vendor_plant_id, "ac_power_kw", start, min(stop, now), "5m"
+                        child.vendor_plant_id, "ac_power_kw", start, min(stop, now), "15m"
                     )
                     for t, v in child_series:
                         combined_series[t] = combined_series.get(t, 0.0) + v
                 series = sorted(combined_series.items())
             else:
                 series = await influx.query_plant_series(
-                    plant.vendor_plant_id, "ac_power_kw", start, min(stop, now), "5m"
+                    plant.vendor_plant_id, "ac_power_kw", start, min(stop, now), "15m"
                 )
             if series:
                 last_power_val = float(series[-1][1])
@@ -296,10 +300,21 @@ async def overview(
                 inverters.extend(await c.awaitable_attrs.inverters)
         else:
             inverters = list(await plant.awaitable_attrs.inverters)
-            
-        inv_power_sum = sum((getattr(inv, "last_power_kw", 0.0) or 0.0) for inv in inverters)
-        inv_daily_sum = sum((getattr(inv, "last_energy_daily_kwh", 0.0) or 0.0) for inv in inverters)
-        
+
+        # Cache-Influx önceliği: cihaz cache'i yalnızca son güncelleme
+        # STALE_AFTER içindeyse kullanılır — aksi hâlde Influx serisi (yoksa 0).
+        from luminmind.analytics.inverter_health import STALE_AFTER
+        _now = datetime.now(tz=UTC)
+        fresh_invs = [
+            inv for inv in inverters
+            if inv.last_seen_at is not None
+            and (_now - _as_utc(inv.last_seen_at)) <= STALE_AFTER  # type: ignore[operator]
+        ]
+        inv_power_sum = sum((inv.last_power_kw or 0.0) for inv in fresh_invs)
+        inv_daily_sum = sum(
+            (inv.last_energy_daily_kwh or 0.0) for inv in fresh_invs
+            if inv.last_energy_daily_kwh is not None
+        )
         if inv_power_sum > 0:
             last_power_val = inv_power_sum
         if inv_daily_sum > 0:
@@ -485,17 +500,30 @@ async def plant_detail(
 
     inverters = []
     batteries = []
+    plant_label_by_id: dict[uuid.UUID, str] = {}
     if is_parent:
         for c in children:
             inverters.extend(await c.awaitable_attrs.inverters)
             batteries.extend(await c.awaitable_attrs.batteries)
+            plant_label_by_id[c.id] = c.name.split(" · ")[-1]
     else:
         inverters = list(await plant.awaitable_attrs.inverters)
         batteries = list(await plant.awaitable_attrs.batteries)
 
-    inverter_rows = _build_inverter_rows(inverters)
-    daily_sum = sum((getattr(inv, "last_energy_daily_kwh", 0.0) or 0.0) for inv in inverters)
-    
+    inverter_rows = _build_inverter_rows(
+        inverters,
+        plant_label_by_id if is_parent else None,
+    )
+    # Cihaz cache'i sadece STALE_AFTER içindeyse günlük üretim toplamına dahil et.
+    from luminmind.analytics.inverter_health import STALE_AFTER
+    now_utc = datetime.now(tz=UTC)
+    fresh_inverters = [
+        inv for inv in inverters
+        if inv.last_seen_at is not None
+        and (now_utc - _as_utc(inv.last_seen_at)) <= STALE_AFTER  # type: ignore[operator]
+        and inv.last_energy_daily_kwh is not None
+    ]
+    daily_sum = sum((inv.last_energy_daily_kwh or 0.0) for inv in fresh_inverters)
     if daily_sum > 0:
         ui_energy_kwh = daily_sum
 
@@ -545,8 +573,16 @@ async def plant_detail(
     )
 
 
-def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
-    """İnvertör tablosu için görsel satırları hazırlar (durum/rozet/sıcaklık rengi)."""
+def _build_inverter_rows(
+    inverters: "Sequence[Any]",
+    plant_label_by_id: "dict[uuid.UUID, str] | None" = None,
+) -> list[dict[str, Any]]:
+    """İnvertör tablosu için görsel satırları hazırlar (durum/rozet/sıcaklık rengi).
+
+    `plant_label_by_id` verilirse (parent görünümde alt tesisleri ayırmak için)
+    her satır `plant_label` alanı taşır — aynı `slave_id`'yi farklı fabrikalarda
+    ayırt etmeyi sağlar.
+    """
     from luminmind.analytics.inverter_health import (
         CRITICAL_OVERHEAT_C,
         OVERHEAT_C,
@@ -597,10 +633,14 @@ def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
         elif inv.last_status:
             error_or_status = inv.last_status
 
+        plant_label = ""
+        if plant_label_by_id is not None:
+            plant_label = plant_label_by_id.get(inv.plant_id, "")
         rows.append(
             {
                 "vendor_device_id": inv.vendor_device_id,
                 "plant_id": inv.plant_id,
+                "plant_label": plant_label,
                 "health_chip": health_chip,
                 "health_label": health_label,
                 "power": (
@@ -636,21 +676,18 @@ async def inverter_detail(
     )
 
     plant = await _load_plant(session, plant_id)
-    
-    # Check if the plant has children (by string matching name, e.g. 'Parent · Child')
-    all_plants = (await session.scalars(select(Plant))).all()
-    valid_plant_ids = [plant.id]
-    for p in all_plants:
-        if " · " in p.name and p.name.split(" · ")[0] == plant.name:
-            valid_plant_ids.append(p.id)
-
+    # Cihaz her zaman URL'deki tesise ait olmalı — parent'ın alt tesislerini
+    # burada aramıyoruz çünkü `slave_id` fabrikalar arasında çakışabilir
+    # (mekanik-1 ve uretim-1 farklı cihazlar). Parent URL'sinden bir cihaz
+    # açmak istenirse tablodaki link ilgili alt tesisin URL'sine gitmeli.
     inverter = (
         await session.scalars(
             select(Inverter).where(
-                Inverter.plant_id.in_(valid_plant_ids), Inverter.vendor_device_id == device_id
+                Inverter.plant_id == plant.id,
+                Inverter.vendor_device_id == device_id,
             )
         )
-    ).first()
+    ).one_or_none()
     if inverter is None:
         raise HTTPException(status_code=404, detail="inverter not found")
 
@@ -844,7 +881,7 @@ async def anomaly_detail(
             )
         else:
             points = await influx.query_plant_series(
-                plant.vendor_plant_id, "ac_power_kw", w_start, w_stop, "5m"
+                plant.vendor_plant_id, "ac_power_kw", w_start, w_stop, "15m"
             )
         chart_html = line_chart([Series("Güç", "#f2b544", points)], TRT, unit="kW")
 
