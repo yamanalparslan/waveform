@@ -27,7 +27,15 @@ from luminmind.core.schemas import TelemetryPoint
 logger = logging.getLogger(__name__)
 
 # Uyarı kural sabitleri — konfigüre edilebilir (config.py'ye taşınabilir)
-STALE_AFTER = timedelta(minutes=30)
+STALE_AFTER = timedelta(minutes=30)  # bu eşiği aşan cihaz "çevrimdışı" olur
+
+
+def fresh_window(interval_minutes: int) -> timedelta:
+    """Cihaz cache değerinin (anlık güç, günlük üretim) UI'da "canlı" sayılacağı
+    süre. Bir polling atlanabilir toleransı için 2×interval, STALE_AFTER ile
+    kapaklı — böylece 5 dk pollingde son 10 dk içinde güncellenen değer canlı,
+    5 dk pollingde 15 dkdır kayıp olanınki eski sayılır."""
+    return min(timedelta(minutes=interval_minutes * 2), STALE_AFTER)
 OVERHEAT_C = 65.0
 CRITICAL_OVERHEAT_C = 75.0
 HEALTHY_STATUSES = frozenset({"AKTIF", "AKTİF", "ACTIVE", "OK", "NORMAL", "RUN", ""})

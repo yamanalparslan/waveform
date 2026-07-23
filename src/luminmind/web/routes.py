@@ -301,14 +301,15 @@ async def overview(
         else:
             inverters = list(await plant.awaitable_attrs.inverters)
 
-        # Cache-Influx önceliği: cihaz cache'i yalnızca son güncelleme
-        # STALE_AFTER içindeyse kullanılır — aksi hâlde Influx serisi (yoksa 0).
-        from luminmind.analytics.inverter_health import STALE_AFTER
+        # Cache-Influx önceliği: cihaz cache'i sadece polling penceresi içinde
+        # canlı sayılır (2 × ingestion_interval, STALE_AFTER ile kapaklı).
+        from luminmind.analytics.inverter_health import fresh_window
+        _fw = fresh_window(settings.ingestion_interval_minutes)
         _now = datetime.now(tz=UTC)
         fresh_invs = [
             inv for inv in inverters
             if inv.last_seen_at is not None
-            and (_now - _as_utc(inv.last_seen_at)) <= STALE_AFTER  # type: ignore[operator]
+            and (_now - _as_utc(inv.last_seen_at)) <= _fw  # type: ignore[operator]
         ]
         inv_power_sum = sum((inv.last_power_kw or 0.0) for inv in fresh_invs)
         inv_daily_sum = sum(
@@ -470,6 +471,7 @@ async def plant_detail(
     energy_kwh = 0.0
     expected_kwh = 0.0
     influx = request.app.state.influx
+    settings: Settings = request.app.state.settings
     if influx is not None:
         actual_dict = plant_actual_from_samples(await influx.query_raw_window(start, stop))
         expected_dict = await influx.query_twin_window(start, stop)
@@ -514,13 +516,15 @@ async def plant_detail(
         inverters,
         plant_label_by_id if is_parent else None,
     )
-    # Cihaz cache'i sadece STALE_AFTER içindeyse günlük üretim toplamına dahil et.
-    from luminmind.analytics.inverter_health import STALE_AFTER
+    # Cihaz cache'i polling penceresi (2 × ingestion_interval) içindeyse
+    # günlük üretim toplamına dahil et.
+    from luminmind.analytics.inverter_health import fresh_window
+    _fw = fresh_window(settings.ingestion_interval_minutes)
     now_utc = datetime.now(tz=UTC)
     fresh_inverters = [
         inv for inv in inverters
         if inv.last_seen_at is not None
-        and (now_utc - _as_utc(inv.last_seen_at)) <= STALE_AFTER  # type: ignore[operator]
+        and (now_utc - _as_utc(inv.last_seen_at)) <= _fw  # type: ignore[operator]
         and inv.last_energy_daily_kwh is not None
     ]
     daily_sum = sum((inv.last_energy_daily_kwh or 0.0) for inv in fresh_inverters)
@@ -708,12 +712,13 @@ async def inverter_detail(
     peak_power = max((v for _, v in power_points), default=0.0)
     energy_kwh = sum(v for _, v in power_points) * 0.25 if power_points else 0.0
     # Üretici doğrudan cihaz başına gün-toplam kWh raporluyorsa (Tescom
-    # `gunluk_uretim_kwh`) onu tercih et — daha doğru ve satırla bitişik.
-    from luminmind.analytics.inverter_health import STALE_AFTER
+    # `gunluk_uretim_kwh`) onu tercih et — polling penceresi içindeyse.
+    from luminmind.analytics.inverter_health import fresh_window
+    settings: Settings = request.app.state.settings
+    _fw = fresh_window(settings.ingestion_interval_minutes)
     _fresh = (
         inverter.last_seen_at is not None
-        and (datetime.now(tz=UTC) - _as_utc(inverter.last_seen_at))  # type: ignore[operator]
-        <= STALE_AFTER
+        and (datetime.now(tz=UTC) - _as_utc(inverter.last_seen_at)) <= _fw  # type: ignore[operator]
     )
     if _fresh and inverter.last_energy_daily_kwh is not None:
         energy_kwh = inverter.last_energy_daily_kwh
