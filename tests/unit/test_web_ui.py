@@ -162,6 +162,59 @@ async def test_arbitrage_page_shows_plan_and_revenue(client, engine):
     assert "<svg" in response.text
 
 
+async def test_arbitrage_page_defaults_to_latest_plan_when_no_date(client, engine):
+    """URL'de ?date yoksa tesisin en yeni planına düşmeli — böylece kullanıcı
+    her açtığında 'plan yok' görmesin."""
+    await do_login(client)
+    plan_day = date(2026, 7, 20)
+    await run_arbitrage(SETTINGS, day=plan_day, engine=engine)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.get(f"/ui/plants/{plant.id}/arbitrage")
+    assert response.status_code == 200
+    # date input değerinin en yeni plana geldiğini teyit et
+    assert f'value="{plan_day.isoformat()}"' in response.text
+    assert "Beklenen günlük gelir" in response.text
+
+
+async def test_arbitrage_run_button_generates_plan(client, engine):
+    """Admin 'Şimdi plan üret' POST'u planı üretir ve sayfaya döner."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    target = date(2026, 7, 22)
+    response = await client.post(
+        f"/ui/plants/{plant.id}/arbitrage/run",
+        data={"date": target.isoformat()},
+    )
+    assert response.status_code == 303
+    assert "notice=ok" in response.headers["location"]
+    # Plan gerçekten oluştu mu — GET yap ve fiyat eğrisini bekle
+    page = await client.get(
+        f"/ui/plants/{plant.id}/arbitrage?date={target.isoformat()}"
+    )
+    assert "Beklenen günlük gelir" in page.text
+
+
+async def test_arbitrage_run_requires_admin(client, engine):
+    """viewer rolündeki kullanıcı manuel plan üretimini tetikleyemez."""
+    async with session_scope(engine) as session:
+        from luminmind.core.security import hash_password
+        session.add(User(
+            email="viewer@luminmind.local",
+            hashed_password=hash_password("viewpass"),
+            role="viewer",
+        ))
+    await do_login(client, email="viewer@luminmind.local", password="viewpass")
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(
+        f"/ui/plants/{plant.id}/arbitrage/run",
+        data={"date": "2026-07-22"},
+    )
+    assert response.status_code == 403
+
+
 async def test_map_page_embeds_sites_and_leaflet(client):
     await do_login(client)
     response = await client.get("/ui/harita")

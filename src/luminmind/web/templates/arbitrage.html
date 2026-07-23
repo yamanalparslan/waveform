@@ -6,12 +6,32 @@
 <h1>Arbitraj Planı</h1>
 <p class="sub">{{ plant.name }} · EPİAŞ GÖP fiyatları üzerinden şarj/deşarj zamanlaması</p>
 
+{% if notice == 'ok' %}
+<div class="info" style="border-color:var(--teal); color:var(--teal)">
+  Plan üretildi.</div>
+{% elif notice == 'failed' %}
+<div class="info" style="border-color:var(--coral); color:var(--coral)">
+  Plan üretimi başarısız — worker loglarına bakın.</div>
+{% elif notice == 'no-battery' %}
+<div class="info" style="border-color:var(--amber); color:var(--amber)">
+  Bu tesise tanımlı batarya yok — arbitraj için önce BESS eklemelisiniz.</div>
+{% endif %}
+
 <div class="toolbar">
   <form method="get" class="row-inline">
     <label for="date" style="margin:0; text-transform:none">Gün</label>
     <input id="date" type="date" name="date" value="{{ day_str }}">
     <button class="primary">Göster</button>
   </form>
+  {% if user.role == 'admin' and has_batteries %}
+  <form method="post" action="/ui/plants/{{ plant.id }}/arbitrage/run" class="row-inline"
+        style="margin-left:12px">
+    <input type="hidden" name="date" value="{{ day_str }}">
+    <button type="submit" title="Bu gün için planı hemen üret">
+      ⟳ Şimdi plan üret
+    </button>
+  </form>
+  {% endif %}
   {% if plan %}
   <div style="margin-left:auto; text-align:right">
     <div style="font-size:11.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-faint)">
@@ -44,9 +64,14 @@
   {% endfor %}
 </table>
 </div>
-{% else %}
+{% elif has_batteries %}
 <div class="info">Bu gün için kayıtlı plan yok. Planlar her gün 12:00 UTC'de (15:00 TRT)
-ertesi gün için otomatik üretilir; worker üzerinden elle de tetikleyebilirsiniz.</div>
+ertesi gün için otomatik üretilir.
+{% if user.role == 'admin' %}Yukarıdaki <b>Şimdi plan üret</b> düğmesini kullanabilirsiniz.
+{% endif %}</div>
+{% else %}
+<div class="info">Bu tesise tanımlı batarya yok. Arbitraj planlaması için tesis
+tanımına bir BESS eklemelisiniz (Faz 4 kalibrasyon adımı).</div>
 {% endif %}
 <p class="note">LP optimizasyonu SoC sınırları, C-rate, gün sonu enerji restorasyonu ve
 günlük çevrim limitini gözetir.</p>

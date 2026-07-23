@@ -8,6 +8,7 @@ olarak üretilir (charts.py). Saatler TRT gösterilir.
 import csv
 import io
 import json
+import logging
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
@@ -42,6 +43,8 @@ from luminmind.core.security import (
     verify_password,
 )
 from luminmind.web.charts import Series, line_chart, price_plan_chart, sparkline
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ui", tags=["web"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -1023,11 +1026,26 @@ async def arbitrage_page(
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
     plant = await _load_plant(session, plant_id)
-    day = _parse_day(request.query_params.get("date"), datetime.now(tz=TRT).date())
 
     battery_ids = (
         await session.scalars(select(BatterySystem.id).where(BatterySystem.plant_id == plant.id))
     ).all()
+    # Varsayılan gün: URL'de yoksa bu tesisin en yeni mevcut planı, o da yoksa yarın
+    # (arbitraj planlaması bir sonraki gün için yapılır).
+    default_day = datetime.now(tz=TRT).date() + timedelta(days=1)
+    if battery_ids:
+        latest_day = (
+            await session.scalars(
+                select(ArbitragePlan.plan_date)
+                .where(ArbitragePlan.battery_id.in_(battery_ids))
+                .order_by(ArbitragePlan.plan_date.desc())
+                .limit(1)
+            )
+        ).first()
+        if latest_day is not None:
+            default_day = latest_day
+    day = _parse_day(request.query_params.get("date"), default_day)
+
     plan = (
         await session.scalars(
             select(ArbitragePlan).where(
@@ -1069,8 +1087,54 @@ async def arbitrage_page(
             "slots": slot_rows,
             "chart": price_plan_chart(prices, actions, TRT),
             "action_labels": ACTION_LABELS,
+            "has_batteries": len(battery_ids) > 0,
+            "notice": request.query_params.get("notice"),
             "page_title": f"{plant.name} · Arbitraj",
         },
+    )
+
+
+@router.post("/plants/{plant_id}/arbitrage/run")
+async def arbitrage_run(
+    request: Request,
+    plant_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+    date: Annotated[str, Form()] = "",
+) -> Response:
+    """Admin için manuel plan üretimi — beat'in 12:00 UTC'yi beklemeden."""
+    from luminmind.workers.tasks.arbitrage import run_arbitrage
+
+    plant = await _load_plant(session, plant_id)
+    target_day = _parse_day(date or None, datetime.now(tz=TRT).date() + timedelta(days=1))
+    settings: Settings = request.app.state.settings
+    # Bu tesise batarya yoksa sessiz dön — kullanıcıyı bilgilendirir.
+    battery_count = (
+        await session.scalar(
+            select(func.count()).where(BatterySystem.plant_id == plant.id)
+        )
+    )
+    if not battery_count:
+        return RedirectResponse(
+            f"/ui/plants/{plant.id}/arbitrage?date={target_day.isoformat()}"
+            f"&notice=no-battery",
+            status_code=303,
+        )
+    try:
+        # run_arbitrage tüm bataryalar için çalışır; bu tesise ait olanlar Postgres'ten
+        # zaten filtreleniyor (aşağıdaki task tesis bazlı değil, batarya bazlı).
+        # engine'i app state'den geçir — test suit'i SQLite kullanır, task kendi
+        # Postgres bağlantısını kurmaya çalışmasın.
+        await run_arbitrage(
+            settings=settings, day=target_day, engine=request.app.state.engine
+        )
+        notice = "ok"
+    except Exception:
+        logger.exception("manual arbitrage run failed plant=%s day=%s", plant.id, target_day)
+        notice = "failed"
+    return RedirectResponse(
+        f"/ui/plants/{plant.id}/arbitrage?date={target_day.isoformat()}&notice={notice}",
+        status_code=303,
     )
 
 
