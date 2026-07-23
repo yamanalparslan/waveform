@@ -52,7 +52,7 @@ def _nice_num(x: float, round_result: bool) -> float:
         nice_f = 1 if f < 1.5 else 2 if f < 3 else 5 if f < 7 else 10
     else:
         nice_f = 1 if f <= 1 else 2 if f <= 2 else 5 if f <= 5 else 10
-    return nice_f * 10 ** exp
+    return float(nice_f * 10 ** exp)
 
 
 def _nice_ticks(v_max: float, target: int = 5) -> tuple[float, list[float]]:
@@ -159,6 +159,93 @@ def sparkline(
         f'stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
         f"</svg>"
     )
+
+
+def waterfall_chart(
+    stages: list[tuple[str, float, float]],
+    unit: str = "kWh",
+    width: int = _WIDTH,
+    height: int = 260,
+) -> str:
+    """Kayıp şelalesi — teorikten gerçeğe azalan kümülatif bloklar.
+
+    `stages`: (etiket, kümülatif_kwh, kayıp_kwh) listesi; ilk basamak taban
+    (kayıp 0). Her ara basamak, önceki tepe ile kendi tepesi arasında "asılı"
+    bir kayıp bloğu olarak çizilir; ilk ve son basamak dolu sütundur.
+    """
+    if not stages:
+        return _empty(width, height, "Veri yok")
+    base = stages[0][1]
+    if base <= 0:
+        return _empty(width, height, "Veri yetersiz")
+
+    x0, x1 = _PAD_LEFT, width - _PAD_RIGHT
+    y0, y1 = height - 54, _PAD_TOP  # alt boşluk etiketler için geniş
+    v_max, y_ticks = _nice_ticks(base, target=5)
+    step = y_ticks[1] - y_ticks[0] if len(y_ticks) >= 2 else 1.0
+
+    parts: list[str] = [f'<svg viewBox="0 0 {width} {height}" class="chart" role="img">']
+    for value in y_ticks:
+        y = _scale(value, 0.0, v_max, y0, y1)
+        parts.append(
+            f'<line x1="{x0}" y1="{y:.1f}" x2="{x1}" y2="{y:.1f}" class="grid"/>'
+            f'<text x="{x0 - 8}" y="{y + 4:.1f}" text-anchor="end" class="tick">'
+            f"{escape(_fmt_axis(value, step))}</text>"
+        )
+    parts.append(f'<text x="14" y="{_PAD_TOP + 10}" class="tick unit">{escape(unit)}</text>')
+
+    n = len(stages)
+    slot_w = (x1 - x0) / n
+    bar_w = slot_w * 0.6
+    loss_color = "#e2725b"   # kayıp — mercan
+    full_color = "#f2b544"   # taban/gerçek — kehribar
+    prev_top = base
+    for i, (label, cum, loss) in enumerate(stages):
+        cx = x0 + slot_w * (i + 0.5)
+        bx = cx - bar_w / 2
+        if i == 0 or i == n - 1:
+            # dolu sütun (taban = teorik, son = gerçek)
+            top = _scale(cum, 0.0, v_max, y0, y1)
+            parts.append(
+                f'<rect x="{bx:.1f}" y="{top:.1f}" width="{bar_w:.1f}" '
+                f'height="{y0 - top:.1f}" rx="3" fill="{full_color}">'
+                f"<title>{escape(_fmt_axis(cum, step))} {escape(unit)}</title></rect>"
+            )
+        else:
+            # asılı kayıp bloğu: önceki tepe → bu tepe
+            y_top = _scale(prev_top, 0.0, v_max, y0, y1)
+            y_bot = _scale(cum, 0.0, v_max, y0, y1)
+            parts.append(
+                f'<rect x="{bx:.1f}" y="{y_top:.1f}" width="{bar_w:.1f}" '
+                f'height="{max(1.0, y_bot - y_top):.1f}" rx="3" fill="{loss_color}" '
+                f'opacity="0.85"><title>-{escape(_fmt_axis(loss, step))} {escape(unit)}'
+                f"</title></rect>"
+            )
+            # bağlantı çizgisi
+            parts.append(
+                f'<line x1="{cx - slot_w/2 + bar_w/2 + 2:.1f}" y1="{y_top:.1f}" '
+                f'x2="{cx - bar_w/2:.1f}" y2="{y_top:.1f}" stroke="{loss_color}" '
+                f'stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>'
+            )
+        # etiket (iki satır: ad + değer)
+        val_txt = (
+            f"{_fmt_axis(cum, step)}" if (i == 0 or i == n - 1)
+            else f"−{_fmt_axis(loss, step)}"
+        )
+        parts.append(
+            f'<text x="{cx:.1f}" y="{height - 30}" text-anchor="middle" class="tick" '
+            f'style="font-size:10px">{escape(_wrap_label(label))}</text>'
+            f'<text x="{cx:.1f}" y="{height - 12}" text-anchor="middle" class="tick" '
+            f'style="font-weight:700">{escape(val_txt)}</text>'
+        )
+        prev_top = cum
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _wrap_label(label: str, limit: int = 16) -> str:
+    """Uzun etiketi ilk kelime öbeğiyle kısaltır (tek satır SVG için)."""
+    return label if len(label) <= limit else label[: limit - 1] + "…"
 
 
 def daily_bar_chart(

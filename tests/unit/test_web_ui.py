@@ -40,6 +40,14 @@ class FakeTsSource:
     async def query_twin_window(self, start, stop):
         return {"mock-plant-1": {NOW: 560.0}}
 
+    async def query_twin_detail_window(self, start, stop):
+        # IEC 61724 tam şelale için POA + hücre sıcaklığı sağla
+        return {
+            "mock-plant-1": {
+                NOW: {"expected": 560.0, "poa": 850.0, "cell_temp": 44.0},
+            }
+        }
+
 
 @pytest.fixture
 async def engine():
@@ -116,6 +124,12 @@ async def test_plant_detail_renders_svg_chart(client, engine):
     assert "Gerçek" in response.text and "Beklenen" in response.text
     assert "mock-plant-1-inv-01" in response.text  # invertör tablosu
     assert "8S1P" in response.text  # batarya kartı
+    # IEC 61724 performans bölümü + kayıp şelalesi (POA sağlandığı için tam şelale)
+    assert "IEC 61724" in response.text
+    assert "Spesifik verim" in response.text
+    assert "Sıcaklık-düzeltmeli PR" in response.text
+    assert "Kayıp şelalesi" in response.text
+    assert "Teorik (POA)" in response.text
 
 
 async def test_anomalies_page_and_status_action(client, engine):

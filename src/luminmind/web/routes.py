@@ -48,6 +48,7 @@ from luminmind.web.charts import (
     line_chart,
     price_plan_chart,
     sparkline,
+    waterfall_chart,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,8 +273,8 @@ async def overview(
     ).all()
     open_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in open_counts_rows}
 
-    children_by_parent_name = {}
-    top_level_plants = []
+    children_by_parent_name: dict[str, list[Plant]] = {}
+    top_level_plants: list[Plant] = []
 
     for p in plants:
         if " · " in p.name:
@@ -485,13 +486,13 @@ async def plant_detail(
     peak_kw = 0.0
     energy_kwh = 0.0
     expected_kwh = 0.0
+    actual: dict[datetime, float] = {}
+    expected: dict[datetime, float] = {}
     influx = request.app.state.influx
     settings: Settings = request.app.state.settings
     if influx is not None:
         actual_dict = plant_actual_from_samples(await influx.query_raw_window(start, stop))
         expected_dict = await influx.query_twin_window(start, stop)
-        actual = {}
-        expected = {}
 
         if is_parent:
             child_ids = [c.vendor_plant_id for c in children]
@@ -559,6 +560,71 @@ async def plant_detail(
         "pr_ok": pr >= 85.0,
     }
 
+    # IEC 61724 performans göstergeleri + kayıp şelalesi
+    perf_kpis: dict[str, str] | None = None
+    waterfall_svg = ""
+    if influx is not None and actual and expected:
+        from luminmind.analytics.performance import (
+            compute_kpis,
+            compute_loss_waterfall,
+        )
+
+        dc_kwp = plant.dc_capacity_kwp or 0.0
+        ac_kw = plant.ac_capacity_kw or 0.0
+        if is_parent:
+            dc_kwp = sum((c.dc_capacity_kwp or 0.0) for c in children)
+            ac_kw = sum((c.ac_capacity_kw or 0.0) for c in children)
+
+        # POA/hücre sıcaklığı — twin varsa tam şelale, yoksa 2 basamak
+        poa: dict[datetime, float] = {}
+        cell_temp: dict[datetime, float] = {}
+        detail_fn = getattr(influx, "query_twin_detail_window", None)
+        if detail_fn is not None:
+            detail = await detail_fn(start, stop)
+            vplant_ids = (
+                [c.vendor_plant_id for c in children] if is_parent
+                else [plant.vendor_plant_id]
+            )
+            # POA/sıcaklık tesisler arası ortalanır (aynı meteoroloji), beklenen toplanır
+            poa_acc: dict[datetime, list[float]] = {}
+            temp_acc: dict[datetime, list[float]] = {}
+            for vid in vplant_ids:
+                for ts, fields in detail.get(vid, {}).items():
+                    if "poa" in fields:
+                        poa_acc.setdefault(ts, []).append(fields["poa"])
+                    if "cell_temp" in fields:
+                        temp_acc.setdefault(ts, []).append(fields["cell_temp"])
+            poa = {ts: sum(vs) / len(vs) for ts, vs in poa_acc.items()}
+            cell_temp = {ts: sum(vs) / len(vs) for ts, vs in temp_acc.items()}
+
+        kpi = compute_kpis(
+            actual, expected, dc_capacity_kwp=dc_kwp or None,
+            ac_capacity_kw=ac_kw or None, period_hours=24.0,
+            actual_interval_h=5.0 / 60.0, expected_interval_h=0.25,
+            poa=poa or None, cell_temp=cell_temp or None,
+        )
+        stages = compute_loss_waterfall(
+            actual, expected, dc_capacity_kwp=dc_kwp or None,
+            actual_interval_h=5.0 / 60.0, expected_interval_h=0.25,
+            poa=poa or None, cell_temp=cell_temp or None,
+        )
+        perf_kpis = {
+            "specific_yield": (
+                f"{kpi.specific_yield:.2f}" if kpi.specific_yield is not None else "—"
+            ),
+            "capacity_factor": (
+                f"{kpi.capacity_factor_pct:.1f}" if kpi.capacity_factor_pct is not None else "—"
+            ),
+            "pr": f"{kpi.pr_pct:.1f}" if kpi.pr_pct is not None else "—",
+            "pr_temp": f"{kpi.pr_temp_pct:.1f}" if kpi.pr_temp_pct is not None else "—",
+            "availability": (
+                f"{kpi.availability_pct:.1f}" if kpi.availability_pct is not None else "—"
+            ),
+        }
+        waterfall_svg = waterfall_chart(
+            [(s.label, s.kwh, s.loss_kwh) for s in stages], unit="kWh"
+        )
+
     sidebar_plants, _ = await sidebar_plants_context(session)
 
     child_sites = []
@@ -583,6 +649,8 @@ async def plant_detail(
             "plant_open_anomalies": await _open_anomaly_count(session, plant.id),
             "day_str": day.isoformat(),
             "kpis": kpis,
+            "perf_kpis": perf_kpis,
+            "waterfall_chart": waterfall_svg,
             "production_chart": line_chart(series, TRT, unit="kW"),
             "is_parent": is_parent,
             "child_sites_json": json.dumps(child_sites) if is_parent else "[]",

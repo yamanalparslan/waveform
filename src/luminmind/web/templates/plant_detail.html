@@ -50,6 +50,45 @@
 <h2>Üretim — gerçek vs beklenen</h2>
 <div class="chart-wrap">{{ production_chart | safe }}</div>
 
+{% if perf_kpis %}
+<h2>Performans (IEC 61724)</h2>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+  <div class="kpi accent-amber">
+    <div class="label">Spesifik verim</div>
+    <div class="value">{{ perf_kpis.specific_yield }}<small>kWh/kWp</small></div>
+    <div class="trend">Yf · gün</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Performans oranı</div>
+    <div class="value">{{ perf_kpis.pr }}<small>%</small></div>
+    <div class="trend">gerçek ÷ teorik</div>
+  </div>
+  <div class="kpi accent-blue">
+    <div class="label">Sıcaklık-düzeltmeli PR</div>
+    <div class="value">{{ perf_kpis.pr_temp }}<small>%</small></div>
+    <div class="trend">25 °C'ye normalize</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Kapasite faktörü</div>
+    <div class="value">{{ perf_kpis.capacity_factor }}<small>%</small></div>
+    <div class="trend">CF · gün</div>
+  </div>
+  <div class="kpi accent-coral">
+    <div class="label">Erişilebilirlik</div>
+    <div class="value">{{ perf_kpis.availability }}<small>%</small></div>
+    <div class="trend">izlenen · gündüz</div>
+  </div>
+</div>
+
+{% if waterfall_chart %}
+<h2>Kayıp şelalesi</h2>
+<div class="chart-wrap">{{ waterfall_chart | safe }}</div>
+<p class="note">Teorik üretimden (POA ışınımı × kapasite) gerçek üretime kadar kayıplar:
+sıcaklık, sistem/dönüşüm (invertör + kablo + trafo) ve saha (gölgelenme, kirlilik,
+duruş). POA verisi yoksa yalnızca beklenen → saha kaybı → gerçek gösterilir.</p>
+{% endif %}
+{% endif %}
+
 {% if is_parent and child_sites_json != "[]" %}
 <br>
 <div class="grid split-2">
