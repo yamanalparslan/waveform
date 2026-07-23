@@ -248,6 +248,14 @@ async def overview(
     now = datetime.now(tz=UTC)
     start, stop = _trt_day_window(now.astimezone(TRT).date())
 
+    # Tesis eğrilerini plant detay grafiğiyle aynı yoldan üret: ham örnekleri
+    # 5 dk bucket'a topla (cihaz zigzag'ı/spike'ı olmadan gerçek toplam AC güç).
+    actual_by_plant: dict[str, dict[datetime, float]] = {}
+    if influx is not None:
+        actual_by_plant = plant_actual_from_samples(
+            await influx.query_raw_window(start, min(stop, now))
+        )
+
     plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
     open_counts_rows = (
         await session.execute(
@@ -260,7 +268,7 @@ async def overview(
 
     children_by_parent_name = {}
     top_level_plants = []
-    
+
     for p in plants:
         if " · " in p.name:
             parent_name = p.name.split(" · ")[0]
@@ -281,21 +289,17 @@ async def overview(
 
         if influx is not None:
             if is_parent:
-                combined_series = {}
+                combined_series: dict[datetime, float] = {}
                 for child in children:
-                    child_series = await influx.query_plant_series(
-                        child.vendor_plant_id, "ac_power_kw", start, min(stop, now), "15m"
-                    )
-                    for t, v in child_series:
+                    for t, v in actual_by_plant.get(child.vendor_plant_id, {}).items():
                         combined_series[t] = combined_series.get(t, 0.0) + v
                 series = sorted(combined_series.items())
             else:
-                series = await influx.query_plant_series(
-                    plant.vendor_plant_id, "ac_power_kw", start, min(stop, now), "15m"
-                )
+                series = sorted(actual_by_plant.get(plant.vendor_plant_id, {}).items())
             if series:
                 last_power_val = float(series[-1][1])
-                today_energy_val = sum(v for _, v in series) * 0.25
+                # 5 dk bucket → kWh = sum(kw) × 5/60
+                today_energy_val = sum(v for _, v in series) * (5.0 / 60.0)
 
         inverters = []
         if is_parent:
@@ -327,7 +331,7 @@ async def overview(
         total_energy += today_energy_val
         if last_power_val > 0.1:
             plants_producing += 1
-            
+
         plant_open_anomalies = open_counts.get(plant.id, 0)
         capacity = plant.dc_capacity_kwp or 0.0
         if is_parent:
@@ -463,9 +467,11 @@ async def plant_detail(
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
     plant = await _load_plant(session, plant_id)
-    children = (await session.scalars(select(Plant).where(Plant.name.startswith(f"{plant.name} · ")))).all()
+    children = (await session.scalars(
+        select(Plant).where(Plant.name.startswith(f"{plant.name} · "))
+    )).all()
     is_parent = len(children) > 0
-    
+
     day = _parse_day(request.query_params.get("date"), datetime.now(tz=TRT).date())
     start, stop = _trt_day_window(day)
 
@@ -480,7 +486,7 @@ async def plant_detail(
         expected_dict = await influx.query_twin_window(start, stop)
         actual = {}
         expected = {}
-        
+
         if is_parent:
             child_ids = [c.vendor_plant_id for c in children]
             for cid in child_ids:
@@ -659,7 +665,11 @@ def _build_inverter_rows(
                 ),
                 "temp": f"{inv.last_temp_c:.1f} °C" if inv.last_temp_c is not None else "—",
                 "temp_color": temp_color,
-                "energy_daily": f"{inv.last_energy_daily_kwh:.1f} kWh" if getattr(inv, "last_energy_daily_kwh", None) is not None else "—",
+                "energy_daily": (
+                    f"{inv.last_energy_daily_kwh:.1f} kWh"
+                    if getattr(inv, "last_energy_daily_kwh", None) is not None
+                    else "—"
+                ),
                 "error_or_status": error_or_status,
                 "last_seen": last_seen_local,
             }
