@@ -707,6 +707,19 @@ async def inverter_detail(
 
     peak_power = max((v for _, v in power_points), default=0.0)
     energy_kwh = sum(v for _, v in power_points) * 0.25 if power_points else 0.0
+    # Üretici doğrudan cihaz başına gün-toplam kWh raporluyorsa (Tescom
+    # `gunluk_uretim_kwh`) onu tercih et — daha doğru ve satırla bitişik.
+    from luminmind.analytics.inverter_health import STALE_AFTER
+    _fresh = (
+        inverter.last_seen_at is not None
+        and (datetime.now(tz=UTC) - _as_utc(inverter.last_seen_at))  # type: ignore[operator]
+        <= STALE_AFTER
+    )
+    if _fresh and inverter.last_energy_daily_kwh is not None:
+        energy_kwh = inverter.last_energy_daily_kwh
+        energy_source = "cihaz verisi"
+    else:
+        energy_source = "15 dk toplamı"
 
     # Sağlık rozeti — plant_detail'daki mantıkla aynı, tek satır için
     rows = _build_inverter_rows([inverter])
@@ -736,6 +749,7 @@ async def inverter_detail(
         "last_seen": last_seen_local,
         "peak_power": _fmt_int(peak_power) if peak_power else "—",
         "energy_kwh": _fmt_int(energy_kwh) if energy_kwh else "—",
+        "energy_source": energy_source,
         "last_temp": f"{inverter.last_temp_c:.1f}" if inverter.last_temp_c is not None else "—",
         "temp_color": temp_color,
         "temp_hot": inverter.last_temp_c is not None and inverter.last_temp_c > OVERHEAT_C,

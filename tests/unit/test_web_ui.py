@@ -477,6 +477,31 @@ def test_line_chart_renders_polyline_per_series():
     assert "Gerçek" in svg and "kW" in svg
 
 
+def test_line_chart_low_range_uses_decimal_labels():
+    """Tepe ~2 kW olduğunda Y ekseni etiketleri 0/1/2 gibi net değerler olmalı
+    (eskiden `.0f` tüm etiketleri int'e yuvarlıyor ve 1/1/1/2/2 gibi tekrarlar
+    çıkıyordu)."""
+    points = [(NOW + timedelta(minutes=15 * i), 0.4 * i) for i in range(6)]  # max 2.0
+    svg = line_chart([Series("Güç", "#f2b544", points)], TRT, unit="kW")
+    # nice-tick algoritması 0.0..2.0 arasını 0.5 adımla bölmeli:
+    # etiketler "0.0", "0.5", "1.0", "1.5", "2.0" — hiçbiri tekrar etmez
+    assert ">0.0<" in svg
+    assert ">1.0<" in svg
+    assert ">2.0<" in svg
+
+
+def test_line_chart_uses_hour_aligned_x_ticks():
+    """X ekseni etiketleri tam saat sınırlarına oturmalı (05:00 gibi, 05:27 değil)."""
+    from datetime import UTC as _UTC
+    base = datetime(2026, 7, 23, 5, 27, 15, tzinfo=_UTC)
+    points = [(base + timedelta(minutes=15 * i), float(i)) for i in range(16)]  # 4 saat
+    svg = line_chart([Series("Güç", "#f2b544", points)], TRT, unit="kW")
+    # tam-saat işaretlerinden en az biri (":00" biçimli) mevcut olmalı
+    assert svg.count(":00<") >= 2
+    # 05:27 gibi rasgele dakika ile başlayan etiket olmamalı
+    assert "05:27<" not in svg
+
+
 def test_price_plan_chart_colors_actions():
     prices = [(NOW + timedelta(hours=h), 1500.0 + h) for h in range(3)]
     actions = {prices[0][0]: ("charge", 100.0), prices[2][0]: ("discharge", 100.0)}
