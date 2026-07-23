@@ -42,7 +42,13 @@ from luminmind.core.security import (
     hash_password,
     verify_password,
 )
-from luminmind.web.charts import Series, line_chart, price_plan_chart, sparkline
+from luminmind.web.charts import (
+    Series,
+    daily_bar_chart,
+    line_chart,
+    price_plan_chart,
+    sparkline,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1260,11 +1266,7 @@ async def reports_page(
         (datetime(d.year, d.month, d.day, tzinfo=TRT), v)
         for d, v in sorted(daily_totals.items())
     ]
-    energy_chart = line_chart(
-        [Series("Portföy enerjisi", "#f2b544", energy_points)],
-        TRT,
-        unit="kWh",
-    )
+    energy_chart = daily_bar_chart(energy_points, TRT, unit="kWh", color="#f2b544")
 
     def _pr_color(pr: float) -> str:
         if pr <= 0:

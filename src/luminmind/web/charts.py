@@ -161,6 +161,72 @@ def sparkline(
     )
 
 
+def daily_bar_chart(
+    points: list[tuple[datetime, float]],
+    zone: tzinfo,
+    unit: str = "kWh",
+    color: str = "#f2b544",
+    width: int = _WIDTH,
+    height: int = _HEIGHT,
+) -> str:
+    """Günlük toplam için dikey bar grafiği (gün başına bir bar).
+
+    Günlük üretim ayrık bir büyüklük — çizgi yerine bar dürüst gösterimdir.
+    X ekseni tarih etiketli (gg.aa); çok gün varsa etiketler seyreltilir.
+    Her barın <title>'ı tam değeri taşır (tarayıcı tooltip'i).
+    """
+    if not points:
+        return _empty(width, height, "Veri yok")
+    pts = sorted(points)
+    raw_max = max(v for _, v in pts)
+    v_max, y_ticks = _nice_ticks(raw_max, target=5)
+    step = y_ticks[1] - y_ticks[0] if len(y_ticks) >= 2 else 1.0
+
+    x0, x1 = _PAD_LEFT, width - _PAD_RIGHT
+    y0, y1 = height - _PAD_BOTTOM, _PAD_TOP
+
+    parts: list[str] = [
+        f'<svg viewBox="0 0 {width} {height}" class="chart" role="img">',
+    ]
+    # y ekseni ızgarası + etiketleri (nice-tick)
+    for value in y_ticks:
+        y = _scale(value, 0.0, v_max, y0, y1)
+        parts.append(
+            f'<line x1="{x0}" y1="{y:.1f}" x2="{x1}" y2="{y:.1f}" class="grid"/>'
+            f'<text x="{x0 - 8}" y="{y + 4:.1f}" text-anchor="end" class="tick">'
+            f"{escape(_fmt_axis(value, step))}</text>"
+        )
+    parts.append(
+        f'<text x="14" y="{_PAD_TOP + 10}" class="tick unit">{escape(unit)}</text>'
+    )
+
+    # bar yerleşimi — eşit aralıklı slotlar, slotun %64'ü bar
+    n = len(pts)
+    slot_w = (x1 - x0) / n
+    bar_w = slot_w * 0.64
+    # etiket seyreltme: en çok ~10 etiket
+    label_stride = max(1, math.ceil(n / 10))
+
+    for i, (ts, v) in enumerate(pts):
+        cx = x0 + slot_w * (i + 0.5)
+        bx = cx - bar_w / 2
+        by = _scale(v, 0.0, v_max, y0, y1)
+        bh = max(0.0, y0 - by)
+        parts.append(
+            f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bar_w:.1f}" height="{bh:.1f}" '
+            f'rx="3" fill="{color}" class="bar">'
+            f"<title>{escape(_fmt_axis(v, step))} {escape(unit)}</title></rect>"
+        )
+        if i % label_stride == 0 or i == n - 1:
+            label = datetime.fromtimestamp(ts.timestamp(), tz=zone).strftime("%d.%m")
+            parts.append(
+                f'<text x="{cx:.1f}" y="{height - 12}" text-anchor="middle" '
+                f'class="tick">{label}</text>'
+            )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
 def line_chart(
     series: list[Series],
     zone: tzinfo,

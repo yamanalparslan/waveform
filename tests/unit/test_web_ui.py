@@ -13,7 +13,7 @@ from luminmind.core.aggregate import RawSample
 from luminmind.core.db import session_scope
 from luminmind.core.models import AnomalyEvent, Base, Inverter, Plant, User
 from luminmind.scripts.seed import seed
-from luminmind.web.charts import Series, line_chart, price_plan_chart
+from luminmind.web.charts import Series, daily_bar_chart, line_chart, price_plan_chart
 from luminmind.workers.tasks.arbitrage import run_arbitrage
 
 SETTINGS = Settings(jwt_secret="test-secret", lm_use_mock_prices=True)
@@ -652,6 +652,27 @@ async def test_logout_clears_session(client):
 def test_line_chart_empty_state():
     svg = line_chart([], TRT)
     assert "Veri yok" in svg
+
+
+def test_daily_bar_chart_renders_one_bar_per_day():
+    """Günlük rapor eğrisi bar olmalı — gün başına bir <rect>, tarih etiketli."""
+    days = [
+        (datetime(2026, 7, 20, tzinfo=TRT), 1200.0),
+        (datetime(2026, 7, 21, tzinfo=TRT), 1800.0),
+        (datetime(2026, 7, 22, tzinfo=TRT), 900.0),
+    ]
+    svg = daily_bar_chart(days, TRT, unit="kWh")
+    # 3 gün → 3 bar (class="bar")
+    assert svg.count('class="bar"') == 3
+    # çizgi değil bar: polyline olmamalı
+    assert "<polyline" not in svg
+    # tarih etiketleri saat değil gün.ay biçiminde
+    assert "20.07" in svg and "22.07" in svg
+    assert "00:00" not in svg  # saat ekseni kalmadı
+
+
+def test_daily_bar_chart_empty_state():
+    assert "Veri yok" in daily_bar_chart([], TRT)
 
 
 def test_line_chart_renders_polyline_per_series():

@@ -236,6 +236,8 @@ td.desc{color:var(--text-dim); font-size:13px; max-width:320px}
 .chart .tick{fill:var(--text-faint); font-size:11px; font-family:var(--mono)}
 .chart .unit{fill:var(--text-dim); font-weight:600; font-family:var(--sans)}
 .chart-empty{fill:var(--text-faint); font-size:14px}
+.chart .bar{transition:opacity var(--dur-1) var(--ease-out); transform-origin:center bottom}
+.chart .bar:hover{opacity:.82}
 
 /* ---- Utilities ---- */
 .toolbar{display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap}
