@@ -35,9 +35,9 @@
   {% if plan %}
   <div style="margin-left:auto; text-align:right">
     <div style="font-size:11.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-faint)">
-      Beklenen günlük gelir</div>
+      Beklenen günlük gelir{% if battery_count > 1 %} ({{ battery_count }} BESS){% endif %}</div>
     <div class="num" style="font-size:26px; font-weight:700; color:var(--teal)">
-      {{ "%.2f"|format(plan.expected_revenue_try) }} TL</div>
+      {{ "%.2f"|format(combined_revenue) }} TL</div>
   </div>
   {% endif %}
 </div>
@@ -69,9 +69,17 @@
 ertesi gün için otomatik üretilir.
 {% if user.role == 'admin' %}Yukarıdaki <b>Şimdi plan üret</b> düğmesini kullanabilirsiniz.
 {% endif %}</div>
+{% elif is_parent_view %}
+<div class="info">
+  Bu üst tesise veya alt fabrikalarına tanımlı BESS yok. Sol menüden
+  <b>alt fabrikalara</b> (ör. Mekanik / Uretim) girip <b>+ Yeni BESS ekle</b>
+  formuyla batarya ekleyebilirsin. Ekledikten sonra arbitraj planı buradan
+  toplu olarak (parent + tüm alt tesisler) görünür.
+</div>
 {% else %}
 <div class="info">Bu tesise tanımlı batarya yok. Arbitraj planlaması için tesis
-tanımına bir BESS eklemelisiniz (Faz 4 kalibrasyon adımı).</div>
+tanımına bir BESS eklemelisiniz — sayfanın alt kısmındaki <b>+ Yeni BESS ekle</b>
+formundan.</div>
 {% endif %}
 <p class="note">LP optimizasyonu SoC sınırları, C-rate, gün sonu enerji restorasyonu ve
 günlük çevrim limitini gözetir.</p>

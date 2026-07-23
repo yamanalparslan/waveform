@@ -1028,9 +1028,19 @@ async def arbitrage_page(
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
     plant = await _load_plant(session, plant_id)
+    # Parent görünümdeyse alt tesislerin bataryalarını da kapsa — böylece
+    # kullanıcı "Tescom İzmir GES · Mekanik" fabrikasına eklediği BESS'i
+    # üst başlıktan da görebilir (Genel Bakış / plant_detail agregasyonuyla
+    # tutarlı).
+    children = (await session.scalars(
+        select(Plant).where(Plant.name.startswith(f"{plant.name} · "))
+    )).all()
+    scoped_plant_ids = [plant.id, *[c.id for c in children]]
 
     battery_ids = (
-        await session.scalars(select(BatterySystem.id).where(BatterySystem.plant_id == plant.id))
+        await session.scalars(
+            select(BatterySystem.id).where(BatterySystem.plant_id.in_(scoped_plant_ids))
+        )
     ).all()
     # Varsayılan gün: URL'de yoksa bu tesisin en yeni mevcut planı, o da yoksa yarın
     # (arbitraj planlaması bir sonraki gün için yapılır).
@@ -1048,13 +1058,15 @@ async def arbitrage_page(
             default_day = latest_day
     day = _parse_day(request.query_params.get("date"), default_day)
 
-    plan = (
+    day_plans = (
         await session.scalars(
             select(ArbitragePlan).where(
                 ArbitragePlan.battery_id.in_(battery_ids), ArbitragePlan.plan_date == day
             )
         )
-    ).first()
+    ).all()
+    plan = day_plans[0] if day_plans else None
+    combined_revenue = sum(p.expected_revenue_try for p in day_plans)
 
     prices: list[tuple[datetime, float]] = []
     actions: dict[datetime, tuple[str, float]] = {}
@@ -1090,6 +1102,9 @@ async def arbitrage_page(
             "chart": price_plan_chart(prices, actions, TRT),
             "action_labels": ACTION_LABELS,
             "has_batteries": len(battery_ids) > 0,
+            "battery_count": len(battery_ids),
+            "combined_revenue": combined_revenue,
+            "is_parent_view": len(children) > 0,
             "notice": request.query_params.get("notice"),
             "page_title": f"{plant.name} · Arbitraj",
         },
