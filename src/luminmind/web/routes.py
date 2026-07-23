@@ -574,6 +574,8 @@ async def plant_detail(
             "child_sites_json": json.dumps(child_sites) if is_parent else "[]",
             "inverter_rows": inverter_rows,
             "batteries": batteries,
+            "bess_error": request.query_params.get("bess_error"),
+            "bess_success": request.query_params.get("bess_success"),
             "page_title": plant.name,
             "auto_refresh_s": 60,
         },
@@ -1583,6 +1585,101 @@ async def plant_edit_submit(
     plant.ac_capacity_kw = _opt_float(ac_capacity_kw)
     plant.timezone = timezone or "Europe/Istanbul"
     return RedirectResponse(f"/ui/plants/{plant.id}", status_code=303)
+
+
+# ------------------------------ BESS management ------------------------------
+
+
+@router.post("/plants/{plant_id}/bess/yeni")
+async def bess_new(
+    plant_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+    chemistry: Annotated[str, Form()] = "NMC-21700",
+    rated_energy_kwh: Annotated[str, Form()] = "",
+    rated_power_kw: Annotated[str, Form()] = "",
+    cells_series: Annotated[str, Form()] = "1",
+    cells_parallel: Annotated[str, Form()] = "1",
+    pack_count: Annotated[str, Form()] = "1",
+) -> Response:
+    """Tesise yeni bir BESS ekler. Enerji/güç zorunlu; hücre topolojisi opsiyonel."""
+    plant = await _load_plant(session, plant_id)
+    energy = _opt_float(rated_energy_kwh)
+    power = _opt_float(rated_power_kw)
+    if energy is None or power is None or energy <= 0 or power <= 0:
+        return RedirectResponse(
+            f"/ui/plants/{plant.id}?bess_error="
+            + quote("Enerji (kWh) ve Güç (kW) zorunlu ve pozitif olmalı"),
+            status_code=303,
+        )
+    session.add(BatterySystem(
+        plant_id=plant.id,
+        chemistry=chemistry or "NMC-21700",
+        rated_energy_kwh=energy,
+        rated_power_kw=power,
+        cells_series=int(_opt_float(cells_series) or 1),
+        cells_parallel=int(_opt_float(cells_parallel) or 1),
+        pack_count=int(_opt_float(pack_count) or 1),
+    ))
+    return RedirectResponse(
+        f"/ui/plants/{plant.id}?bess_success="
+        + quote(f"{energy:.1f} kWh / {power:.1f} kW BESS eklendi"),
+        status_code=303,
+    )
+
+
+@router.post("/plants/{plant_id}/bess/{bess_id}/duzenle")
+async def bess_edit(
+    plant_id: uuid.UUID,
+    bess_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+    chemistry: Annotated[str, Form()] = "NMC-21700",
+    rated_energy_kwh: Annotated[str, Form()] = "",
+    rated_power_kw: Annotated[str, Form()] = "",
+    cells_series: Annotated[str, Form()] = "1",
+    cells_parallel: Annotated[str, Form()] = "1",
+    pack_count: Annotated[str, Form()] = "1",
+) -> Response:
+    bess = await session.get(BatterySystem, bess_id)
+    if bess is None or bess.plant_id != plant_id:
+        raise HTTPException(status_code=404, detail="bess not found")
+    energy = _opt_float(rated_energy_kwh)
+    power = _opt_float(rated_power_kw)
+    if energy is None or power is None or energy <= 0 or power <= 0:
+        return RedirectResponse(
+            f"/ui/plants/{plant_id}?bess_error="
+            + quote("Enerji ve Güç zorunlu ve pozitif olmalı"),
+            status_code=303,
+        )
+    bess.chemistry = chemistry or "NMC-21700"
+    bess.rated_energy_kwh = energy
+    bess.rated_power_kw = power
+    bess.cells_series = int(_opt_float(cells_series) or 1)
+    bess.cells_parallel = int(_opt_float(cells_parallel) or 1)
+    bess.pack_count = int(_opt_float(pack_count) or 1)
+    return RedirectResponse(
+        f"/ui/plants/{plant_id}?bess_success=" + quote("BESS güncellendi"),
+        status_code=303,
+    )
+
+
+@router.post("/plants/{plant_id}/bess/{bess_id}/sil")
+async def bess_delete(
+    plant_id: uuid.UUID,
+    bess_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> Response:
+    """BESS silinir; bağlı arbitraj planları cascade ile birlikte silinir."""
+    bess = await session.get(BatterySystem, bess_id)
+    if bess is None or bess.plant_id != plant_id:
+        raise HTTPException(status_code=404, detail="bess not found")
+    await session.delete(bess)
+    return RedirectResponse(
+        f"/ui/plants/{plant_id}?bess_success=" + quote("BESS silindi"),
+        status_code=303,
+    )
 
 
 # ------------------------------ User management ------------------------------

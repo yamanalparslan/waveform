@@ -430,6 +430,86 @@ async def test_plant_delete_requires_admin(client, engine):
     assert response.status_code == 403
 
 
+async def test_bess_new_adds_battery_to_plant(client, engine):
+    """POST /plants/{id}/bess/yeni tesise yeni BESS ekler."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(
+        f"/ui/plants/{plant.id}/bess/yeni",
+        data={
+            "chemistry": "LFP",
+            "rated_energy_kwh": "600",
+            "rated_power_kw": "300",
+            "cells_series": "16",
+            "cells_parallel": "1",
+            "pack_count": "8",
+        },
+    )
+    assert response.status_code == 303
+    assert "bess_success=" in response.headers["location"]
+    async with session_scope(engine) as session:
+        from luminmind.core.models import BatterySystem
+        bess = (await session.scalars(
+            select(BatterySystem).where(BatterySystem.chemistry == "LFP")
+        )).one()
+        assert bess.rated_energy_kwh == 600.0
+        assert bess.rated_power_kw == 300.0
+        assert bess.pack_count == 8
+
+
+async def test_bess_new_rejects_zero_capacity(client, engine):
+    """Enerji veya güç 0/negatif ise hata ile geri döner."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(
+        f"/ui/plants/{plant.id}/bess/yeni",
+        data={"chemistry": "NMC", "rated_energy_kwh": "0", "rated_power_kw": "100"},
+    )
+    assert response.status_code == 303
+    assert "bess_error=" in response.headers["location"]
+
+
+async def test_bess_delete_removes_battery(client, engine):
+    """POST /plants/{id}/bess/{bid}/sil bataryayı gerçekten siler."""
+    from luminmind.core.models import BatterySystem
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        bess = BatterySystem(
+            plant_id=plant.id, chemistry="NMC",
+            cells_series=1, cells_parallel=1, pack_count=1,
+            rated_energy_kwh=100.0, rated_power_kw=50.0,
+        )
+        session.add(bess)
+        await session.flush()
+        bess_id = bess.id
+    response = await client.post(f"/ui/plants/{plant.id}/bess/{bess_id}/sil")
+    assert response.status_code == 303
+    async with session_scope(engine) as session:
+        assert (await session.get(BatterySystem, bess_id)) is None
+
+
+async def test_bess_new_requires_admin(client, engine):
+    """viewer BESS ekleyemez."""
+    async with session_scope(engine) as session:
+        from luminmind.core.security import hash_password
+        session.add(User(
+            email="bv@luminmind.local",
+            hashed_password=hash_password("vpass"),
+            role="viewer",
+        ))
+    await do_login(client, email="bv@luminmind.local", password="vpass")
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(
+        f"/ui/plants/{plant.id}/bess/yeni",
+        data={"rated_energy_kwh": "100", "rated_power_kw": "50"},
+    )
+    assert response.status_code == 403
+
+
 async def test_map_uses_new_amber_marker(client):
     await do_login(client)
     response = await client.get("/ui/harita")

@@ -102,8 +102,17 @@
 </table>
 </div>
 
-{% if batteries %}
 <h2>Batarya sistemi (BESS)</h2>
+{% if bess_error %}
+<div class="info" style="border-color:var(--coral); color:var(--coral); margin-bottom:12px">
+  {{ bess_error }}</div>
+{% endif %}
+{% if bess_success %}
+<div class="info" style="border-color:var(--teal); color:var(--teal); margin-bottom:12px">
+  {{ bess_success }}</div>
+{% endif %}
+
+{% if batteries %}
 <div class="grid cards-3">
   {% for b in batteries %}
   <div class="card pad">
@@ -116,9 +125,83 @@
       <div><div class="k">Güç</div><div class="v">{{ b.rated_power_kw }} kW</div></div>
       <div><div class="k">Paket</div><div class="v">{{ b.pack_count }}</div></div>
     </div>
+    {% if user.role == 'admin' %}
+    <details style="margin-top:14px">
+      <summary style="cursor:pointer; color:var(--text-dim); font-size:12.5px">Düzenle</summary>
+      <form method="post"
+            action="/ui/plants/{{ b.plant_id }}/bess/{{ b.id }}/duzenle"
+            style="margin-top:10px">
+        <label>Kimya</label>
+        <input name="chemistry" value="{{ b.chemistry }}">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+          <div><label>Enerji (kWh)</label>
+            <input name="rated_energy_kwh" type="number" step="0.1" min="0"
+                   value="{{ b.rated_energy_kwh }}" required></div>
+          <div><label>Güç (kW)</label>
+            <input name="rated_power_kw" type="number" step="0.1" min="0"
+                   value="{{ b.rated_power_kw }}" required></div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px">
+          <div><label>Seri hücre</label>
+            <input name="cells_series" type="number" min="1" value="{{ b.cells_series }}"></div>
+          <div><label>Paralel</label>
+            <input name="cells_parallel" type="number" min="1" value="{{ b.cells_parallel }}"></div>
+          <div><label>Paket</label>
+            <input name="pack_count" type="number" min="1" value="{{ b.pack_count }}"></div>
+        </div>
+        <div style="margin-top:12px; display:flex; gap:8px">
+          <button class="primary" style="flex:1">Kaydet</button>
+          <form class="inline" method="post"
+                action="/ui/plants/{{ b.plant_id }}/bess/{{ b.id }}/sil"
+                onsubmit="return confirm('Bu BESS silinsin mi? Bağlı arbitraj planları da silinir.');">
+            <button style="background:var(--coral-soft); color:var(--coral); border-color:transparent">
+              Sil</button>
+          </form>
+        </div>
+      </form>
+    </details>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
+{% else %}
+<div class="info" style="margin-bottom:12px">
+  Bu tesise tanımlı BESS yok. Arbitraj planlaması için bir batarya sistemi eklemelisin.
+</div>
+{% endif %}
+
+{% if user.role == 'admin' and not is_parent %}
+<details style="margin-top:16px" {% if not batteries %}open{% endif %}>
+  <summary style="cursor:pointer; color:var(--amber); font-weight:600; padding:8px 0">
+    + Yeni BESS ekle
+  </summary>
+  <div class="card pad" style="margin-top:10px; max-width:520px">
+    <form method="post" action="/ui/plants/{{ plant.id }}/bess/yeni">
+      <label>Kimya</label>
+      <input name="chemistry" value="NMC-21700" placeholder="ör. NMC-21700, LFP">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+        <div><label>Enerji (kWh) *</label>
+          <input name="rated_energy_kwh" type="number" step="0.1" min="0" required
+                 placeholder="ör. 600"></div>
+        <div><label>Güç (kW) *</label>
+          <input name="rated_power_kw" type="number" step="0.1" min="0" required
+                 placeholder="ör. 300"></div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px">
+        <div><label>Seri hücre</label>
+          <input name="cells_series" type="number" min="1" value="1"></div>
+        <div><label>Paralel</label>
+          <input name="cells_parallel" type="number" min="1" value="1"></div>
+        <div><label>Paket</label>
+          <input name="pack_count" type="number" min="1" value="1"></div>
+      </div>
+      <div style="margin-top:16px">
+        <button class="primary" style="width:100%; justify-content:center">
+          BESS ekle</button>
+      </div>
+    </form>
+  </div>
+</details>
 {% endif %}
 {% endblock %}
 
