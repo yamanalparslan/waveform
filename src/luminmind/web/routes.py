@@ -110,6 +110,25 @@ def _parse_day(value: str | None, default: date) -> date:
         return default
 
 
+# Kurulu gücün kaç katına kadar okuma "makul" sayılır (invertör aşırı-boyutlandırma
+# + ölçüm toleransı). Bunun üstü fiziksel olarak imkânsız — sensör/iletişim hatası.
+_POWER_SANITY_FACTOR = 1.25
+
+
+def _drop_power_outliers(
+    series: dict[datetime, float], capacity_kw: float | None
+) -> dict[datetime, float]:
+    """Kurulu gücü aşırı aşan (imkânsız) güç okumalarını eler — veri kalite kapısı.
+
+    Kapasite bilinmiyorsa (0/None) dokunmaz. Tek bir bozuk okumanın tüm günün
+    tepe gücünü, enerjisini ve PR'ını bozmasını engeller (IEC 61724 veri kalitesi).
+    """
+    if not capacity_kw or capacity_kw <= 0:
+        return series
+    cap = capacity_kw * _POWER_SANITY_FACTOR
+    return {ts: v for ts, v in series.items() if v <= cap}
+
+
 def _fmt_int(x: float | int) -> str:
     return f"{int(round(x)):,}".replace(",", ".")
 
@@ -300,9 +319,17 @@ async def overview(
                 for child in children:
                     for t, v in actual_by_plant.get(child.vendor_plant_id, {}).items():
                         combined_series[t] = combined_series.get(t, 0.0) + v
-                series = sorted(combined_series.items())
+                raw_series = combined_series
             else:
-                series = sorted(actual_by_plant.get(plant.vendor_plant_id, {}).items())
+                raw_series = dict(actual_by_plant.get(plant.vendor_plant_id, {}))
+            # Veri kalite kapısı: imkânsız güç okumalarını ele
+            if is_parent:
+                cap_kw = sum(
+                    (c.ac_capacity_kw or c.dc_capacity_kwp or 0.0) for c in children
+                )
+            else:
+                cap_kw = plant.ac_capacity_kw or plant.dc_capacity_kwp or 0.0
+            series = sorted(_drop_power_outliers(raw_series, cap_kw or None).items())
             if series:
                 last_power_val = float(series[-1][1])
                 # 5 dk bucket → kWh = sum(kw) × 5/60
@@ -587,6 +614,15 @@ async def plant_detail(
         else:
             actual = actual_dict.get(plant.vendor_plant_id, {})
             expected = expected_dict.get(plant.vendor_plant_id, {})
+
+        # Veri kalite kapısı: kurulu gücü aşırı aşan (imkânsız) okumaları ele
+        if is_parent:
+            cap_kw = sum(
+                (c.ac_capacity_kw or c.dc_capacity_kwp or 0.0) for c in children
+            )
+        else:
+            cap_kw = plant.ac_capacity_kw or plant.dc_capacity_kwp or 0.0
+        actual = _drop_power_outliers(actual, cap_kw or None)
 
         if actual:
             series.append(Series("Gerçek", "#f2b544", sorted(actual.items())))

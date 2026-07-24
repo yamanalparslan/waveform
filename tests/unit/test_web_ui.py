@@ -698,6 +698,26 @@ async def test_logout_clears_session(client):
     assert after.status_code == 303  # tekrar login'e yönlenir
 
 
+def test_drop_power_outliers_filters_impossible_readings():
+    """Kurulu gücü aşırı aşan okumalar elenmeli; makul olanlar korunmalı."""
+    from luminmind.web.routes import _drop_power_outliers
+
+    t = datetime(2026, 7, 23, 10, tzinfo=UTC)
+    series = {
+        t: 600.0,                       # 650 kW sahada makul
+        t + timedelta(minutes=5): 2376.0,  # imkânsız spike → elenmeli
+        t + timedelta(minutes=10): 640.0,
+    }
+    cleaned = _drop_power_outliers(series, capacity_kw=650.0)
+    # 650 × 1.25 = 812.5 üstü elenir
+    assert 2376.0 not in cleaned.values()
+    assert cleaned[t] == 600.0
+    assert cleaned[t + timedelta(minutes=10)] == 640.0
+    # kapasite bilinmiyorsa dokunmaz
+    assert _drop_power_outliers(series, None) == series
+    assert _drop_power_outliers(series, 0.0) == series
+
+
 def test_line_chart_empty_state():
     svg = line_chart([], TRT)
     assert "Veri yok" in svg
