@@ -20,10 +20,37 @@
 
   --r-sm:6px; --r-md:10px; --r-lg:14px; --r-xl:20px;
   --shadow-lg: 0 10px 30px -12px #000000cc, 0 2px 6px -2px #00000060;
+  --shadow-xl: 0 24px 60px -20px #000000dd, 0 8px 20px -8px #00000080;
+
+  /* Hareket dili — anlam taşıyan, yay hissi veren eğriler (Apple HIG esini) */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);      /* çıkışta yumuşak duruş */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);   /* hafif geri yaylanma */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-1: 140ms; --dur-2: 240ms; --dur-3: 420ms;
 
   --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
+
+/* ---- Sayfa geçişleri: cross-document View Transitions (Chromium) ---- */
+@view-transition { navigation: auto; }
+
+::view-transition-group(*){ animation-timing-function: var(--ease-out); }
+
+/* Kök cross-fade: içerik yumuşak süzülür, sidebar/topbar kendi grubuyla sabit kalır */
+::view-transition-old(root){
+  animation: vt-fade-out var(--dur-2) var(--ease-out) both;
+}
+::view-transition-new(root){
+  animation: vt-rise-in var(--dur-3) var(--ease-out) both;
+}
+@keyframes vt-fade-out{ to{ opacity:0; transform:translateY(-6px) scale(.994); } }
+@keyframes vt-rise-in{ from{ opacity:0; transform:translateY(10px) scale(.994); } }
+
+/* Kalıcı bölgeler — snapshot'ları aynı olduğundan yerinde crisp kalır
+   (sidebar tüm markayı ve navigasyonu kapsar, ayrıca isimlendirmeye gerek yok) */
+aside{ view-transition-name: lm-sidebar; }
+.topbar{ view-transition-name: lm-topbar; }
 *{box-sizing:border-box;margin:0}
 html,body{height:100%}
 body{
@@ -39,19 +66,29 @@ a:hover{text-decoration:underline}
 button, .btn{
   font:600 13px var(--sans); background:var(--surface-2); color:var(--text);
   border:1px solid var(--line); padding:8px 14px; border-radius:var(--r-sm);
-  cursor:pointer; transition:.15s; display:inline-flex; align-items:center; gap:8px;
+  cursor:pointer; display:inline-flex; align-items:center; gap:8px;
+  transition: background var(--dur-1) var(--ease-out),
+              border-color var(--dur-1) var(--ease-out),
+              transform var(--dur-1) var(--ease-spring),
+              box-shadow var(--dur-2) var(--ease-out);
 }
 button:hover,.btn:hover{background:var(--surface-3); border-color:#334259}
-button.primary{background:var(--amber); color:#1c1608; border-color:transparent; font-weight:700}
-button.primary:hover{background:#ffca5c}
-button.ghost{background:transparent}
-button:focus-visible,input:focus-visible,select:focus-visible{
+button:active,.btn:active{transform:scale(.96)}
+button.primary{background:var(--amber); color:#1c1608; border-color:transparent; font-weight:700;
+  box-shadow:0 1px 0 #ffffff30 inset, 0 6px 18px -8px var(--amber)}
+button.primary:hover{background:#ffca5c; box-shadow:0 1px 0 #ffffff40 inset, 0 10px 24px -8px var(--amber)}
+button.ghost{background:transparent; box-shadow:none}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{
   outline:2px solid var(--amber); outline-offset:2px
 }
 input,select,textarea{
   background:var(--bg2); border:1px solid var(--line); color:var(--text);
   padding:9px 12px; border-radius:var(--r-sm); font:14px var(--sans); width:100%;
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
 }
+input:hover,select:hover,textarea:hover{border-color:#334259}
+input:focus,select:focus,textarea:focus{border-color:var(--amber);
+  box-shadow:0 0 0 3px var(--amber-soft)}
 label{display:block;font-size:12px;color:var(--text-dim);margin:14px 0 5px;
   text-transform:uppercase; letter-spacing:.5px; font-weight:600}
 
@@ -74,9 +111,16 @@ nav.side{display:flex; flex-direction:column; gap:2px}
 nav.side a{
   display:flex; align-items:center; gap:12px;
   color:var(--text-dim); padding:9px 12px; border-radius:var(--r-sm);
-  font-size:14px; text-decoration:none; transition:.15s;
+  font-size:14px; text-decoration:none;
+  transition: background var(--dur-1) var(--ease-out),
+              color var(--dur-1) var(--ease-out),
+              padding var(--dur-2) var(--ease-spring),
+              box-shadow var(--dur-2) var(--ease-out);
 }
 nav.side a:hover{background:var(--surface); color:var(--text)}
+nav.side a:hover .icn{opacity:1; transform:translateX(1px)}
+nav.side a .icn{transition: transform var(--dur-2) var(--ease-spring), opacity var(--dur-1)}
+nav.side a:active{transform:translateX(1px)}
 nav.side a.active{background:var(--surface); color:var(--text);
   box-shadow: inset 3px 0 0 var(--amber); padding-left:15px}
 nav.side a.plant-link{font-weight:600}
@@ -84,12 +128,20 @@ nav.side a.plant-link .plant-name{flex:1; overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap}
 nav.side a.sub{padding-left:34px; font-size:13px}
 nav.side a.sub.active{padding-left:34px} /* alt-nav aktifken sol vurgu istemiyoruz */
+nav.side a.plant-child{font-weight:500; color:var(--text-dim)}
+nav.side a.plant-child.active{color:var(--text)}
+nav.side a.sub-2{padding-left:56px; font-size:12.5px}
+nav.side .plant-group.static{cursor:default; color:var(--text-dim);
+  display:flex; align-items:center; gap:10px; padding:8px 12px; text-decoration:none}
+nav.side .plant-group.static:hover{background:transparent}
+nav.side .plant-group.static .plant-name{flex:1; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; font-weight:600}
 nav.side .icn{width:16px; text-align:center; opacity:.85}
 nav.side .divider{height:1px; background:var(--line); margin:14px 6px}
 nav.side .section-label{font-size:10.5px; text-transform:uppercase; letter-spacing:.8px;
   color:var(--text-faint); padding:8px 12px 6px; font-weight:700}
 
-main{padding:24px 34px 48px; max-width:1240px; width:100%}
+main{padding:24px 34px 48px; max-width:1600px; margin:0 auto; width:100%}
 .topbar{display:flex; align-items:center; gap:18px; margin-bottom:22px; flex-wrap:wrap}
 .crumbs{color:var(--text-faint); font-size:13px}
 .crumbs b{color:var(--text); font-weight:600}
@@ -110,11 +162,15 @@ h2::after{content:""; flex:1; height:1px; background:var(--line-soft)}
 
 /* ---- Cards ---- */
 .card{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
-  overflow:hidden}
+  overflow:hidden;
+  transition: border-color var(--dur-2) var(--ease-out),
+              transform var(--dur-2) var(--ease-spring),
+              box-shadow var(--dur-3) var(--ease-out)}
 .card.pad{padding:20px 22px}
-.card.hoverable{transition:.18s; cursor:pointer}
-.card.hoverable:hover{border-color:#334259; transform:translateY(-1px);
-  box-shadow:var(--shadow-lg)}
+.card.hoverable{cursor:pointer}
+.card.hoverable:hover{border-color:#3a4c68; transform:translateY(-3px);
+  box-shadow:var(--shadow-xl)}
+.card.hoverable:active{transform:translateY(-1px) scale(.995)}
 .grid{display:grid; gap:16px}
 .grid.cards-3{grid-template-columns:repeat(auto-fit, minmax(280px, 1fr))}
 .grid.cards-2{grid-template-columns:repeat(auto-fit, minmax(360px, 1fr))}
@@ -124,10 +180,17 @@ h2::after{content:""; flex:1; height:1px; background:var(--line-soft)}
 
 /* ---- KPI ---- */
 .kpi{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
-  padding:16px 18px; position:relative; overflow:hidden}
+  padding:16px 18px; position:relative; overflow:hidden;
+  transition: border-color var(--dur-2) var(--ease-out),
+              transform var(--dur-2) var(--ease-spring),
+              box-shadow var(--dur-3) var(--ease-out)}
+.kpi:hover{transform:translateY(-2px); box-shadow:var(--shadow-lg); border-color:#2c3a52}
 .kpi::after{content:""; position:absolute; inset:auto 0 0 0; height:2px;
-  background:linear-gradient(90deg, transparent, var(--amber), transparent); opacity:0}
-.kpi:hover::after{opacity:.5}
+  background:linear-gradient(90deg, transparent, var(--amber), transparent); opacity:0;
+  transition:opacity var(--dur-2) var(--ease-out)}
+.kpi:hover::after{opacity:.6}
+.kpi .value{transition:transform var(--dur-2) var(--ease-spring)}
+.kpi:hover .value{transform:translateY(-1px)}
 .kpi .label{color:var(--text-dim); font-size:11.5px; text-transform:uppercase;
   letter-spacing:.6px; font-weight:600}
 .kpi .value{font-size:28px; margin-top:6px; font-weight:700; letter-spacing:-.5px;
@@ -160,7 +223,8 @@ th,td{text-align:left; padding:11px 16px; border-bottom:1px solid var(--line-sof
 tr:last-child td{border-bottom:0}
 th{color:var(--text-faint); font-weight:600; font-size:11px; text-transform:uppercase;
   letter-spacing:.6px; background:#ffffff03}
-tr:hover td{background:#ffffff03}
+tbody tr, table tr{transition:background var(--dur-1) var(--ease-out)}
+tr:hover td{background:#ffffff06}
 td.num{font-variant-numeric:tabular-nums; font-family:var(--mono); font-size:13.5px}
 td.desc{color:var(--text-dim); font-size:13px; max-width:320px}
 
@@ -172,6 +236,8 @@ td.desc{color:var(--text-dim); font-size:13px; max-width:320px}
 .chart .tick{fill:var(--text-faint); font-size:11px; font-family:var(--mono)}
 .chart .unit{fill:var(--text-dim); font-weight:600; font-family:var(--sans)}
 .chart-empty{fill:var(--text-faint); font-size:14px}
+.chart .bar{transition:opacity var(--dur-1) var(--ease-out); transform-origin:center bottom}
+.chart .bar:hover{opacity:.82}
 
 /* ---- Utilities ---- */
 .toolbar{display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap}
@@ -203,8 +269,33 @@ form.inline{display:inline}
   font-size:10.5px; background:var(--coral); color:#fff; font-weight:700; margin-left:6px;
   font-family:var(--mono)}
 
+.chip{transition: transform var(--dur-1) var(--ease-spring)}
+.chip::before{transition: box-shadow var(--dur-2) var(--ease-out)}
+.chip.ok::before{box-shadow:0 0 6px 0 #5cc4c288}
+.chip.crit::before{box-shadow:0 0 6px 0 #f0887488}
+.userchip{transition: border-color var(--dur-2) var(--ease-out)}
+.userchip:hover{border-color:#334259}
+.badge-count{transition: transform var(--dur-2) var(--ease-spring)}
+
 /* Login page overrides */
 body.centered{display:grid; place-items:center; padding:24px}
+
+/* View Transitions desteklemeyen tarayıcılarda (Firefox/Safari) nazik giriş —
+   Chromium VT kullandığından orada bu yol devreye girmez, 60s tazelemede tekrarlamaz */
+@supports not (view-transition-name: none){
+  main{ animation: vt-rise-in var(--dur-3) var(--ease-out) both; }
+}
+
+/* Hareketi azalt tercihi — tüm animasyon ve geçişleri kapat (erişilebilirlik) */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{
+    animation-duration:.001ms !important; animation-iteration-count:1 !important;
+    transition-duration:.001ms !important; scroll-behavior:auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(root),
+  ::view-transition-new(root){ animation:none !important; }
+}
 </style>
 {% block head %}{% endblock %}
 </head>
@@ -227,13 +318,15 @@ body.centered{display:grid; place-items:center; padding:24px}
       <div class="divider"></div>
       <div class="section-label">Tesisler</div>
       {% for sp in sidebar_plants %}
+      {% set parent_active = plant and sp.id == plant.id %}
+      {% set child_active = plant and sp.children and plant.id in sp.children|map(attribute='id') %}
       <a href="/ui/plants/{{ sp.id }}"
-         class="plant-link {{ 'active' if plant and sp.id == plant.id }}">
+         class="plant-link {{ 'active' if parent_active }}">
         <span class="icn">▪</span>
         <span class="plant-name">{{ sp.name }}</span>
         {% if sp.open_anomalies %}<span class="badge-count">{{ sp.open_anomalies }}</span>{% endif %}
       </a>
-      {% if plant and sp.id == plant.id %}
+      {% if parent_active %}
       <a href="/ui/plants/{{ plant.id }}/anomalies"
          class="sub {{ 'active' if section == 'anomalies' }}">
         <span class="icn">△</span> Anomaliler</a>
@@ -241,11 +334,29 @@ body.centered{display:grid; place-items:center; padding:24px}
          class="sub {{ 'active' if section == 'arbitrage' }}">
         <span class="icn">⇄</span> Arbitraj</a>
       {% endif %}
+      {% for child in sp.children %}
+      <a href="/ui/plants/{{ child.id }}"
+         class="sub plant-child {{ 'active' if plant and child.id == plant.id }}">
+        <span class="icn">↳</span>
+        <span class="plant-name">{{ child.short_name }}</span>
+        {% if child.open_anomalies %}<span class="badge-count">{{ child.open_anomalies }}</span>{% endif %}
+      </a>
+      {% if plant and child.id == plant.id %}
+      <a href="/ui/plants/{{ plant.id }}/anomalies"
+         class="sub sub-2 {{ 'active' if section == 'anomalies' }}">
+        <span class="icn">△</span> Anomaliler</a>
+      <a href="/ui/plants/{{ plant.id }}/arbitrage"
+         class="sub sub-2 {{ 'active' if section == 'arbitrage' }}">
+        <span class="icn">⇄</span> Arbitraj</a>
+      {% endif %}
+      {% endfor %}
       {% endfor %}
       {% endif %}
       {% if user.role == 'admin' %}
       <div class="divider"></div>
       <div class="section-label">Yönetim</div>
+      <a href="/ui/tesisler" class="{{ 'active' if section == 'plants-manage' }}">
+        <span class="icn">◱</span> Tesisler</a>
       <a href="/ui/tesisler/yeni" class="{{ 'active' if section == 'plant-new' }}">
         <span class="icn">+</span> Tesis Ekle</a>
       <a href="/ui/kullanicilar" class="{{ 'active' if section == 'users' }}">

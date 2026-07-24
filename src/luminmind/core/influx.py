@@ -202,6 +202,40 @@ from(bucket: "{BUCKET_RAW}")
                 result.setdefault(plant_id, {})[record.get_time()] = float(record.get_value())
         return result
 
+    async def query_twin_detail_window(
+        self, start: datetime, stop: datetime
+    ) -> dict[str, dict[datetime, dict[str, float]]]:
+        """`twin_expected`'dan beklenen + POA ışınım + hücre sıcaklığını okur.
+
+        IEC 61724 performans hesabı ve kayıp şelalesi için kullanılır. Dönüş:
+        {plant_id: {ts: {"expected": kW, "poa": W/m², "cell_temp": °C}}}.
+        """
+        flux = f"""
+from(bucket: "{BUCKET_RAW}")
+  |> range(start: {start.isoformat()}, stop: {stop.isoformat()})
+  |> filter(fn: (r) => r._measurement == "{MEASUREMENT_TWIN}")
+  |> filter(fn: (r) => r._field == "expected_ac_kw" or r._field == "poa_irradiance_wm2"
+                       or r._field == "cell_temp_c")
+"""
+        _field_map = {
+            "expected_ac_kw": "expected",
+            "poa_irradiance_wm2": "poa",
+            "cell_temp_c": "cell_temp",
+        }
+        tables = await self._client.query_api().query(flux)
+        result: dict[str, dict[datetime, dict[str, float]]] = {}
+        for table in tables:
+            for record in table.records:
+                plant_id = str(record.values.get("plant_id", ""))
+                key = _field_map.get(record.get_field())
+                if key is None:
+                    continue
+                ts = record.get_time()
+                result.setdefault(plant_id, {}).setdefault(ts, {})[key] = float(
+                    record.get_value()
+                )
+        return result
+
     async def query_raw_window(self, start: datetime, stop: datetime) -> list[RawSample]:
         """`lm_raw`'dan bir zaman penceresini (tüm tesisler) RawSample listesi olarak okur."""
         flux = f"""

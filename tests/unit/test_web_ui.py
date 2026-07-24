@@ -13,7 +13,7 @@ from luminmind.core.aggregate import RawSample
 from luminmind.core.db import session_scope
 from luminmind.core.models import AnomalyEvent, Base, Inverter, Plant, User
 from luminmind.scripts.seed import seed
-from luminmind.web.charts import Series, line_chart, price_plan_chart
+from luminmind.web.charts import Series, daily_bar_chart, line_chart, price_plan_chart
 from luminmind.workers.tasks.arbitrage import run_arbitrage
 
 SETTINGS = Settings(jwt_secret="test-secret", lm_use_mock_prices=True)
@@ -39,6 +39,14 @@ class FakeTsSource:
 
     async def query_twin_window(self, start, stop):
         return {"mock-plant-1": {NOW: 560.0}}
+
+    async def query_twin_detail_window(self, start, stop):
+        # IEC 61724 tam şelale için POA + hücre sıcaklığı sağla
+        return {
+            "mock-plant-1": {
+                NOW: {"expected": 560.0, "poa": 850.0, "cell_temp": 44.0},
+            }
+        }
 
 
 @pytest.fixture
@@ -116,6 +124,44 @@ async def test_plant_detail_renders_svg_chart(client, engine):
     assert "Gerçek" in response.text and "Beklenen" in response.text
     assert "mock-plant-1-inv-01" in response.text  # invertör tablosu
     assert "8S1P" in response.text  # batarya kartı
+    # IEC 61724 performans bölümü + kayıp şelalesi (POA sağlandığı için tam şelale)
+    assert "IEC 61724" in response.text
+    assert "Spesifik verim" in response.text
+    assert "Sıcaklık-düzeltmeli PR" in response.text
+    assert "Kayıp şelalesi" in response.text
+    assert "Teorik" in response.text and "Gerçek" in response.text
+    # Gün-öncesi üretim tahmini bölümü
+    assert "Yarının üretim tahmini" in response.text
+    assert "Tahmini üretim" in response.text
+    assert "Tahmini gelir" in response.text
+
+
+async def test_plant_detail_past_day_ignores_device_daily_cache(client, engine):
+    """Geçmiş gün görüntülenirken cihazın gün-toplam sayacı (bugünkü, sıfırlanan)
+    kullanılmamalı — o gün için Influx ölçümünden hesaplanan enerji gösterilmeli."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        # Taze ama BUGÜNÜN sayacını taşıyan bir invertör ekle
+        session.add(Inverter(
+            plant_id=plant.id, vendor_device_id="cache-test",
+            model="Cache Inv", ac_capacity_kw=250.0,
+            last_seen_at=datetime.now(tz=UTC),
+            last_power_kw=100.0, last_energy_daily_kwh=35.0,
+            last_status="AKTIF", last_error_code="0",
+        ))
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+
+    yesterday = (datetime.now(tz=UTC) - timedelta(days=1)).date()
+    response = await client.get(f"/ui/plants/{plant.id}?date={yesterday.isoformat()}")
+    assert response.status_code == 200
+    # Geçmiş günde "cihaz verisi" değil "ölçüm toplamı" etiketi görünmeli
+    assert "ölçüm toplamı" in response.text
+    # Bugün görüntülenince cihaz verisi kullanılır
+    today = datetime.now(tz=UTC).date()
+    resp_today = await client.get(f"/ui/plants/{plant.id}?date={today.isoformat()}")
+    assert "cihaz verisi" in resp_today.text
 
 
 async def test_anomalies_page_and_status_action(client, engine):
@@ -157,9 +203,65 @@ async def test_arbitrage_page_shows_plan_and_revenue(client, engine):
         f"/ui/plants/{plant.id}/arbitrage?date={plan_day.isoformat()}"
     )
     assert response.status_code == 200
-    assert "Beklenen günlük gelir" in response.text
+    assert "Toplam tahmini gelir" in response.text
     assert "Şarj" in response.text and "Deşarj" in response.text
     assert "<svg" in response.text
+    # PV tahmini + depolama + piyasa tek yerde (DeepSolar Predict)
+    assert "PV üretim tahmini" in response.text
+    assert "PV satış geliri" in response.text
+
+
+async def test_arbitrage_page_defaults_to_latest_plan_when_no_date(client, engine):
+    """URL'de ?date yoksa tesisin en yeni planına düşmeli — böylece kullanıcı
+    her açtığında 'plan yok' görmesin."""
+    await do_login(client)
+    plan_day = date(2026, 7, 20)
+    await run_arbitrage(SETTINGS, day=plan_day, engine=engine)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.get(f"/ui/plants/{plant.id}/arbitrage")
+    assert response.status_code == 200
+    # date input değerinin en yeni plana geldiğini teyit et
+    assert f'value="{plan_day.isoformat()}"' in response.text
+    assert "Toplam tahmini gelir" in response.text
+
+
+async def test_arbitrage_run_button_generates_plan(client, engine):
+    """Admin 'Şimdi plan üret' POST'u planı üretir ve sayfaya döner."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    target = date(2026, 7, 22)
+    response = await client.post(
+        f"/ui/plants/{plant.id}/arbitrage/run",
+        data={"date": target.isoformat()},
+    )
+    assert response.status_code == 303
+    assert "notice=ok" in response.headers["location"]
+    # Plan gerçekten oluştu mu — GET yap ve fiyat eğrisini bekle
+    page = await client.get(
+        f"/ui/plants/{plant.id}/arbitrage?date={target.isoformat()}"
+    )
+    assert "Toplam tahmini gelir" in page.text
+
+
+async def test_arbitrage_run_requires_admin(client, engine):
+    """viewer rolündeki kullanıcı manuel plan üretimini tetikleyemez."""
+    async with session_scope(engine) as session:
+        from luminmind.core.security import hash_password
+        session.add(User(
+            email="viewer@luminmind.local",
+            hashed_password=hash_password("viewpass"),
+            role="viewer",
+        ))
+    await do_login(client, email="viewer@luminmind.local", password="viewpass")
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(
+        f"/ui/plants/{plant.id}/arbitrage/run",
+        data={"date": "2026-07-22"},
+    )
+    assert response.status_code == 403
 
 
 async def test_map_page_embeds_sites_and_leaflet(client):
@@ -295,6 +397,168 @@ async def test_users_page_admin_can_create(client, engine):
         assert u.role == "viewer"
 
 
+async def test_sidebar_groups_plants_with_dot_separator(client, engine):
+    """Parent kaydı varsa `X · A`, `X · B` onun altında child olarak listelenir."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        admin_id = (await session.scalars(select(User))).first().id
+        # Parent tesis (adı child'ların ön ekiyle birebir eşleşmeli)
+        session.add(Plant(
+            name="Tescom İzmir GES", vendor="tescom",
+            vendor_plant_id="tescom-izmir",
+            owner_id=admin_id,
+        ))
+        session.add(Plant(
+            name="Tescom İzmir GES · Mekanik", vendor="tescom",
+            vendor_plant_id="tescom-izmir-mekanik",
+            owner_id=admin_id,
+        ))
+        session.add(Plant(
+            name="Tescom İzmir GES · Uretim", vendor="tescom",
+            vendor_plant_id="tescom-izmir-uretim",
+            owner_id=admin_id,
+        ))
+
+    response = await client.get("/ui")
+    body = response.text
+    # Parent link + child linkleri hep birlikte görünmeli
+    assert "Tescom İzmir GES" in body
+    assert "plant-child" in body
+    assert ">Mekanik<" in body
+    assert ">Uretim<" in body
+
+
+async def test_plants_manage_page_lists_plants(client, engine):
+    """Tesis yönetimi sayfası tüm tesisleri, kapasitelerini ve düzenle/sil butonlarını gösterir."""
+    await do_login(client)
+    response = await client.get("/ui/tesisler")
+    assert response.status_code == 200
+    assert "Konya GES" in response.text
+    assert "Düzenle" in response.text
+    assert "Sil" in response.text
+    # her satırda sil form'u post yapıyor
+    assert "/tesisler/" in response.text and "/sil" in response.text
+
+
+async def test_plant_delete_removes_from_db(client, engine):
+    """POST /tesisler/{id}/sil tesisi ve invertörlerini gerçekten siler."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        plant_id = plant.id
+        # Bir invertör ekleyelim ki cascade doğrulanabilsin
+        session.add(Inverter(
+            plant_id=plant_id, vendor_device_id="del-test",
+            model="Test", ac_capacity_kw=100.0,
+        ))
+    response = await client.post(f"/ui/tesisler/{plant_id}/sil")
+    assert response.status_code == 303
+    assert "success=" in response.headers["location"]
+    async with session_scope(engine) as session:
+        assert (await session.get(Plant, plant_id)) is None
+        # invertör de silindi (cascade)
+        remaining = (await session.scalars(
+            select(Inverter).where(Inverter.vendor_device_id == "del-test")
+        )).one_or_none()
+        assert remaining is None
+
+
+async def test_plant_delete_requires_admin(client, engine):
+    """viewer rolündeki kullanıcı tesis silemez."""
+    async with session_scope(engine) as session:
+        from luminmind.core.security import hash_password
+        session.add(User(
+            email="v@luminmind.local",
+            hashed_password=hash_password("vpass"),
+            role="viewer",
+        ))
+    await do_login(client, email="v@luminmind.local", password="vpass")
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(f"/ui/tesisler/{plant.id}/sil")
+    assert response.status_code == 403
+
+
+async def test_bess_new_adds_battery_to_plant(client, engine):
+    """POST /plants/{id}/bess/yeni tesise yeni BESS ekler."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(
+        f"/ui/plants/{plant.id}/bess/yeni",
+        data={
+            "chemistry": "LFP",
+            "rated_energy_kwh": "600",
+            "rated_power_kw": "300",
+            "cells_series": "16",
+            "cells_parallel": "1",
+            "pack_count": "8",
+        },
+    )
+    assert response.status_code == 303
+    assert "bess_success=" in response.headers["location"]
+    async with session_scope(engine) as session:
+        from luminmind.core.models import BatterySystem
+        bess = (await session.scalars(
+            select(BatterySystem).where(BatterySystem.chemistry == "LFP")
+        )).one()
+        assert bess.rated_energy_kwh == 600.0
+        assert bess.rated_power_kw == 300.0
+        assert bess.pack_count == 8
+
+
+async def test_bess_new_rejects_zero_capacity(client, engine):
+    """Enerji veya güç 0/negatif ise hata ile geri döner."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(
+        f"/ui/plants/{plant.id}/bess/yeni",
+        data={"chemistry": "NMC", "rated_energy_kwh": "0", "rated_power_kw": "100"},
+    )
+    assert response.status_code == 303
+    assert "bess_error=" in response.headers["location"]
+
+
+async def test_bess_delete_removes_battery(client, engine):
+    """POST /plants/{id}/bess/{bid}/sil bataryayı gerçekten siler."""
+    from luminmind.core.models import BatterySystem
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        bess = BatterySystem(
+            plant_id=plant.id, chemistry="NMC",
+            cells_series=1, cells_parallel=1, pack_count=1,
+            rated_energy_kwh=100.0, rated_power_kw=50.0,
+        )
+        session.add(bess)
+        await session.flush()
+        bess_id = bess.id
+    response = await client.post(f"/ui/plants/{plant.id}/bess/{bess_id}/sil")
+    assert response.status_code == 303
+    async with session_scope(engine) as session:
+        assert (await session.get(BatterySystem, bess_id)) is None
+
+
+async def test_bess_new_requires_admin(client, engine):
+    """viewer BESS ekleyemez."""
+    async with session_scope(engine) as session:
+        from luminmind.core.security import hash_password
+        session.add(User(
+            email="bv@luminmind.local",
+            hashed_password=hash_password("vpass"),
+            role="viewer",
+        ))
+    await do_login(client, email="bv@luminmind.local", password="vpass")
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+    response = await client.post(
+        f"/ui/plants/{plant.id}/bess/yeni",
+        data={"rated_energy_kwh": "100", "rated_power_kw": "50"},
+    )
+    assert response.status_code == 403
+
+
 async def test_map_uses_new_amber_marker(client):
     await do_login(client)
     response = await client.get("/ui/harita")
@@ -310,7 +574,7 @@ async def test_inverter_detail_page(client, engine):
         session.add(Inverter(
             plant_id=plant.id, vendor_device_id="99",
             model="Test Inv", ac_capacity_kw=250.0,
-            last_seen_at=NOW, last_power_kw=142.3, last_temp_c=48.0,
+            last_seen_at=datetime.now(tz=UTC), last_power_kw=142.3, last_temp_c=48.0,
             last_error_code="0", last_status="AKTIF",
         ))
     async with session_scope(engine) as session:
@@ -332,6 +596,45 @@ async def test_inverter_detail_404_for_unknown_device(client, engine):
         plant = (await session.scalars(select(Plant))).one()
     response = await client.get(f"/ui/plants/{plant.id}/inverters/yok")
     assert response.status_code == 404
+
+
+async def test_inverter_detail_scopes_to_plant_not_siblings(client, engine):
+    """Aynı `slave_id` iki child'da varsa detay her zaman URL'deki tesise ait olmalı."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        admin = (await session.scalars(select(User))).first()
+        p1 = Plant(
+            owner_id=admin.id, name="X GES · Mekanik",
+            vendor="tescom", vendor_plant_id="x-mekanik",
+        )
+        p2 = Plant(
+            owner_id=admin.id, name="X GES · Uretim",
+            vendor="tescom", vendor_plant_id="x-uretim",
+        )
+        session.add_all([p1, p2])
+        await session.flush()
+        session.add_all([
+            Inverter(
+                plant_id=p1.id, vendor_device_id="1",
+                model="Mekanik-1", ac_capacity_kw=100.0,
+                last_seen_at=datetime.now(tz=UTC), last_power_kw=42.0,
+                last_status="AKTIF", last_error_code="0",
+            ),
+            Inverter(
+                plant_id=p2.id, vendor_device_id="1",
+                model="Uretim-1", ac_capacity_kw=100.0,
+                last_seen_at=datetime.now(tz=UTC), last_power_kw=88.0,
+                last_status="AKTIF", last_error_code="0",
+            ),
+        ])
+    async with session_scope(engine) as session:
+        p1 = (await session.scalars(select(Plant).where(Plant.name == "X GES · Mekanik"))).one()
+        p2 = (await session.scalars(select(Plant).where(Plant.name == "X GES · Uretim"))).one()
+
+    r1 = await client.get(f"/ui/plants/{p1.id}/inverters/1")
+    r2 = await client.get(f"/ui/plants/{p2.id}/inverters/1")
+    assert "Mekanik-1" in r1.text and "Uretim-1" not in r1.text
+    assert "Uretim-1" in r2.text and "Mekanik-1" not in r2.text
 
 
 async def test_anomaly_detail_page_and_evidence(client, engine):
@@ -395,9 +698,50 @@ async def test_logout_clears_session(client):
     assert after.status_code == 303  # tekrar login'e yönlenir
 
 
+def test_drop_power_outliers_filters_impossible_readings():
+    """Kurulu gücü aşırı aşan okumalar elenmeli; makul olanlar korunmalı."""
+    from luminmind.web.routes import _drop_power_outliers
+
+    t = datetime(2026, 7, 23, 10, tzinfo=UTC)
+    series = {
+        t: 600.0,                       # 650 kW sahada makul
+        t + timedelta(minutes=5): 2376.0,  # imkânsız spike → elenmeli
+        t + timedelta(minutes=10): 640.0,
+    }
+    cleaned = _drop_power_outliers(series, capacity_kw=650.0)
+    # 650 × 1.25 = 812.5 üstü elenir
+    assert 2376.0 not in cleaned.values()
+    assert cleaned[t] == 600.0
+    assert cleaned[t + timedelta(minutes=10)] == 640.0
+    # kapasite bilinmiyorsa dokunmaz
+    assert _drop_power_outliers(series, None) == series
+    assert _drop_power_outliers(series, 0.0) == series
+
+
 def test_line_chart_empty_state():
     svg = line_chart([], TRT)
     assert "Veri yok" in svg
+
+
+def test_daily_bar_chart_renders_one_bar_per_day():
+    """Günlük rapor eğrisi bar olmalı — gün başına bir <rect>, tarih etiketli."""
+    days = [
+        (datetime(2026, 7, 20, tzinfo=TRT), 1200.0),
+        (datetime(2026, 7, 21, tzinfo=TRT), 1800.0),
+        (datetime(2026, 7, 22, tzinfo=TRT), 900.0),
+    ]
+    svg = daily_bar_chart(days, TRT, unit="kWh")
+    # 3 gün → 3 bar (class="bar")
+    assert svg.count('class="bar"') == 3
+    # çizgi değil bar: polyline olmamalı
+    assert "<polyline" not in svg
+    # tarih etiketleri saat değil gün.ay biçiminde
+    assert "20.07" in svg and "22.07" in svg
+    assert "00:00" not in svg  # saat ekseni kalmadı
+
+
+def test_daily_bar_chart_empty_state():
+    assert "Veri yok" in daily_bar_chart([], TRT)
 
 
 def test_line_chart_renders_polyline_per_series():
@@ -405,6 +749,31 @@ def test_line_chart_renders_polyline_per_series():
     svg = line_chart([Series("Gerçek", "#3fa9f5", points)], TRT, unit="kW")
     assert svg.count("<polyline") == 1
     assert "Gerçek" in svg and "kW" in svg
+
+
+def test_line_chart_low_range_uses_decimal_labels():
+    """Tepe ~2 kW olduğunda Y ekseni etiketleri 0/1/2 gibi net değerler olmalı
+    (eskiden `.0f` tüm etiketleri int'e yuvarlıyor ve 1/1/1/2/2 gibi tekrarlar
+    çıkıyordu)."""
+    points = [(NOW + timedelta(minutes=15 * i), 0.4 * i) for i in range(6)]  # max 2.0
+    svg = line_chart([Series("Güç", "#f2b544", points)], TRT, unit="kW")
+    # nice-tick algoritması 0.0..2.0 arasını 0.5 adımla bölmeli:
+    # etiketler "0.0", "0.5", "1.0", "1.5", "2.0" — hiçbiri tekrar etmez
+    assert ">0.0<" in svg
+    assert ">1.0<" in svg
+    assert ">2.0<" in svg
+
+
+def test_line_chart_uses_hour_aligned_x_ticks():
+    """X ekseni etiketleri tam saat sınırlarına oturmalı (05:00 gibi, 05:27 değil)."""
+    from datetime import UTC as _UTC
+    base = datetime(2026, 7, 23, 5, 27, 15, tzinfo=_UTC)
+    points = [(base + timedelta(minutes=15 * i), float(i)) for i in range(16)]  # 4 saat
+    svg = line_chart([Series("Güç", "#f2b544", points)], TRT, unit="kW")
+    # tam-saat işaretlerinden en az biri (":00" biçimli) mevcut olmalı
+    assert svg.count(":00<") >= 2
+    # 05:27 gibi rasgele dakika ile başlayan etiket olmamalı
+    assert "05:27<" not in svg
 
 
 def test_price_plan_chart_colors_actions():

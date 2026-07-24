@@ -42,7 +42,7 @@
   <div class="kpi accent-blue">
     <div class="label">Günlük üretim</div>
     <div class="value">{{ kpis.energy_kwh }}<small>kWh</small></div>
-    <div class="trend">15 dk toplamı</div>
+    <div class="trend">{{ kpis.energy_source }}</div>
   </div>
   <div class="kpi {{ 'accent-coral' if kpis.temp_hot else 'accent-teal' }}">
     <div class="label">Sıcaklık</div>

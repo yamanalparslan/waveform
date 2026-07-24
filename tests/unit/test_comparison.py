@@ -58,6 +58,38 @@ def test_plant_actual_sums_devices():
     assert actual["p2"][ts] == 50.0
 
 
+def test_plant_actual_buckets_devices_at_5m():
+    """Farklı saniyelerde gelen cihaz ölçümleri aynı 5 dk bucket'a düşer ve toplanır.
+    Bir cihazın bucket içindeki iki değeri ortalama alınır (spike tolerans)."""
+    b0 = DAY0 + timedelta(hours=10)         # 10:00:00 (bucket sınırı)
+    b1 = DAY0 + timedelta(hours=10, minutes=5)  # 10:05:00 (sonraki bucket)
+    samples = [
+        # 10:00 bucket'ı — 3 fabrika cihazı farklı saniyelerde
+        RawSample(ts=b0 + timedelta(seconds=15),
+                  plant_id="p1", inverter_id="mekanik-1",
+                  fields={"ac_power_kw": 100.0}),
+        RawSample(ts=b0 + timedelta(seconds=45),
+                  plant_id="p1", inverter_id="uretim-1",
+                  fields={"ac_power_kw": 90.0}),
+        RawSample(ts=b0 + timedelta(minutes=2),
+                  plant_id="p1", inverter_id="uretim-2",
+                  fields={"ac_power_kw": 110.0}),
+        # Aynı cihazın aynı bucket'ta ikinci ölçümü — ortalama alınmalı
+        RawSample(ts=b0 + timedelta(minutes=4, seconds=59),
+                  plant_id="p1", inverter_id="uretim-2",
+                  fields={"ac_power_kw": 130.0}),
+        # 10:05 bucket'ı — farklı bir noktaya düşmeli
+        RawSample(ts=b1 + timedelta(seconds=10),
+                  plant_id="p1", inverter_id="mekanik-1",
+                  fields={"ac_power_kw": 120.0}),
+    ]
+    actual = plant_actual_from_samples(samples)
+    # 10:00 bucket: 100 + 90 + (110+130)/2 = 100 + 90 + 120 = 310
+    assert actual["p1"][b0] == 310.0
+    # 10:05 bucket: yalnız mekanik-1 = 120
+    assert actual["p1"][b1] == 120.0
+
+
 def test_healthy_plant_yields_no_finding():
     samples = make_day(DAY0, lambda ts: 0.99)
     assert classify_window(samples) is None

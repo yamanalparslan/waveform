@@ -33,7 +33,7 @@
   <div class="kpi accent-teal">
     <div class="label">Günlük üretim</div>
     <div class="value">{{ kpis.energy_kwh }}<small>kWh</small></div>
-    <div class="trend">15 dk toplamı</div>
+    <div class="trend">{{ kpis.energy_trend }}</div>
   </div>
   <div class="kpi accent-blue">
     <div class="label">Beklenen (ikiz)</div>
@@ -50,6 +50,96 @@
 <h2>Üretim — gerçek vs beklenen</h2>
 <div class="chart-wrap">{{ production_chart | safe }}</div>
 
+{% if perf_kpis %}
+<h2>Performans (IEC 61724)</h2>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+  <div class="kpi accent-amber">
+    <div class="label">Spesifik verim</div>
+    <div class="value">{{ perf_kpis.specific_yield }}<small>kWh/kWp</small></div>
+    <div class="trend">Yf · gün</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Performans oranı</div>
+    <div class="value">{{ perf_kpis.pr }}<small>%</small></div>
+    <div class="trend">gerçek ÷ teorik</div>
+  </div>
+  <div class="kpi accent-blue">
+    <div class="label">Sıcaklık-düzeltmeli PR</div>
+    <div class="value">{{ perf_kpis.pr_temp }}<small>%</small></div>
+    <div class="trend">25 °C'ye normalize</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Kapasite faktörü</div>
+    <div class="value">{{ perf_kpis.capacity_factor }}<small>%</small></div>
+    <div class="trend">CF · gün</div>
+  </div>
+  <div class="kpi accent-coral">
+    <div class="label">Erişilebilirlik</div>
+    <div class="value">{{ perf_kpis.availability }}<small>%</small></div>
+    <div class="trend">izlenen · gündüz</div>
+  </div>
+</div>
+
+{% if waterfall_chart %}
+<h2>Kayıp şelalesi</h2>
+<div class="chart-wrap">{{ waterfall_chart | safe }}</div>
+<p class="note">
+Panellere düşen güneş enerjisinden (soldaki <b>Teorik</b> sütun) sayaçtaki
+<b>gerçek</b> üretime (sağdaki sütun) kadar enerjinin nerelerde kaybolduğunu
+gösterir. Mercan bloklar kademeli kayıplardır:
+<b>Sıcaklık kaybı</b> — paneller ısındıkça verim düşer;
+<b>Sistem kaybı</b> — invertör dönüşümü, kablo ve trafo kayıpları;
+<b>Saha kaybı</b> — gölgelenme, kirlilik, dizi uyumsuzluğu veya cihaz duruşu gibi
+sahaya özgü kayıplar (bu blok büyükse gerçek bir sorun vardır — temizlik, gölge
+kaynağı ya da arızalı invertör). POA ışınım verisi yoksa yalnızca
+<b>Beklenen → Saha kaybı → Gerçek</b> gösterilir.
+</p>
+{% endif %}
+{% endif %}
+
+{% if forecast_kpis %}
+<h2>Yarının üretim tahmini · {{ forecast_kpis.date }}</h2>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+  <div class="kpi accent-blue">
+    <div class="label">Tahmini üretim</div>
+    <div class="value">{{ forecast_kpis.energy }}<small>kWh</small></div>
+    <div class="trend">dijital ikiz · hava tahmini</div>
+  </div>
+  <div class="kpi accent-amber">
+    <div class="label">Tahmini tepe güç</div>
+    <div class="value">{{ forecast_kpis.peak }}<small>kW</small></div>
+    <div class="trend">gün içi maksimum</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">Tahmini gelir</div>
+    <div class="value">{{ forecast_kpis.revenue }}<small>TL</small></div>
+    <div class="trend">GÖP fiyatı × üretim</div>
+  </div>
+</div>
+<div class="chart-wrap">{{ forecast_chart | safe }}</div>
+<p class="note">Gün-öncesi tahmin: pvlib dijital ikizi yarının Open-Meteo hava
+tahminine koşularak hesaplanır. Gelir tahmini, tahmini üretimi saatlik GÖP
+fiyatlarıyla çarpar (arbitraj/dengeleme kararlarına girdi).</p>
+{% endif %}
+
+{% if is_parent and child_sites_json != "[]" %}
+<br>
+<div class="grid split-2">
+  <div class="card" style="height:350px" id="map-container"></div>
+  <div class="card pad">
+    <h3 style="margin-top:0">Alt Tesisler</h3>
+    <ul style="list-style:none; padding:0; margin-top:16px; color:var(--text-dim); font-size:14px; line-height:2">
+      <script>
+        var sites = {{ child_sites_json | safe }};
+        for(let s of sites) {
+          document.write(`<li><a href="/ui/plants/${s.id}" style="color:var(--amber); font-weight:600">${s.name}</a> — ${s.capacity} kWp</li>`);
+        }
+      </script>
+    </ul>
+  </div>
+</div>
+{% endif %}
+
 <h2>İnvertörler ({{ inverter_rows|length }})</h2>
 <div class="card">
 <table>
@@ -58,22 +148,24 @@
     <th>Durum</th>
     <th style="text-align:right">Anlık güç</th>
     <th style="text-align:right">Sıcaklık</th>
+    <th style="text-align:right">Günlük Üretim</th>
     <th>Hata / Durum</th>
     <th style="text-align:right">Son görülme</th>
   </tr>
   {% for r in inverter_rows %}
-  <tr onclick="window.location.href='/ui/plants/{{ plant.id }}/inverters/{{ r.vendor_device_id }}'"
+  <tr onclick="window.location.href='/ui/plants/{{ r.plant_id }}/inverters/{{ r.vendor_device_id }}'"
       style="cursor:pointer">
-    <td class="num"><a href="/ui/plants/{{ plant.id }}/inverters/{{ r.vendor_device_id }}"
+    <td class="num"><a href="/ui/plants/{{ r.plant_id }}/inverters/{{ r.vendor_device_id }}"
       style="color:var(--amber)">{{ r.vendor_device_id }}</a></td>
     <td><span class="chip {{ r.health_chip }}">{{ r.health_label }}</span></td>
     <td class="num" style="text-align:right">{{ r.power }}</td>
     <td class="num" style="text-align:right; color:{{ r.temp_color }}">{{ r.temp }}</td>
+    <td class="num" style="text-align:right">{{ r.energy_daily }}</td>
     <td>{{ r.error_or_status }}</td>
     <td class="num" style="text-align:right; color:var(--text-faint)">{{ r.last_seen }}</td>
   </tr>
   {% else %}
-  <tr><td colspan="6">
+  <tr><td colspan="7">
     <div class="note" style="padding:20px 0; text-align:center; margin:0">
       Henüz cihaz görülmedi · ingestion çalıştıkça burada belirir
     </div>
@@ -82,8 +174,17 @@
 </table>
 </div>
 
-{% if batteries %}
 <h2>Batarya sistemi (BESS)</h2>
+{% if bess_error %}
+<div class="info" style="border-color:var(--coral); color:var(--coral); margin-bottom:12px">
+  {{ bess_error }}</div>
+{% endif %}
+{% if bess_success %}
+<div class="info" style="border-color:var(--teal); color:var(--teal); margin-bottom:12px">
+  {{ bess_success }}</div>
+{% endif %}
+
+{% if batteries %}
 <div class="grid cards-3">
   {% for b in batteries %}
   <div class="card pad">
@@ -96,8 +197,127 @@
       <div><div class="k">Güç</div><div class="v">{{ b.rated_power_kw }} kW</div></div>
       <div><div class="k">Paket</div><div class="v">{{ b.pack_count }}</div></div>
     </div>
+    {% if user.role == 'admin' %}
+    <details style="margin-top:14px">
+      <summary style="cursor:pointer; color:var(--text-dim); font-size:12.5px">Düzenle</summary>
+      <form method="post"
+            action="/ui/plants/{{ b.plant_id }}/bess/{{ b.id }}/duzenle"
+            style="margin-top:10px">
+        <label>Kimya</label>
+        <input name="chemistry" value="{{ b.chemistry }}">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+          <div><label>Enerji (kWh)</label>
+            <input name="rated_energy_kwh" type="number" step="0.1" min="0"
+                   value="{{ b.rated_energy_kwh }}" required></div>
+          <div><label>Güç (kW)</label>
+            <input name="rated_power_kw" type="number" step="0.1" min="0"
+                   value="{{ b.rated_power_kw }}" required></div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px">
+          <div><label>Seri hücre</label>
+            <input name="cells_series" type="number" min="1" value="{{ b.cells_series }}"></div>
+          <div><label>Paralel</label>
+            <input name="cells_parallel" type="number" min="1" value="{{ b.cells_parallel }}"></div>
+          <div><label>Paket</label>
+            <input name="pack_count" type="number" min="1" value="{{ b.pack_count }}"></div>
+        </div>
+        <div style="margin-top:12px; display:flex; gap:8px">
+          <button class="primary" style="flex:1">Kaydet</button>
+          <form class="inline" method="post"
+                action="/ui/plants/{{ b.plant_id }}/bess/{{ b.id }}/sil"
+                onsubmit="return confirm('Bu BESS silinsin mi? Bağlı arbitraj planları da silinir.');">
+            <button style="background:var(--coral-soft); color:var(--coral); border-color:transparent">
+              Sil</button>
+          </form>
+        </div>
+      </form>
+    </details>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
+{% else %}
+<div class="info" style="margin-bottom:12px">
+  Bu tesise tanımlı BESS yok. Arbitraj planlaması için bir batarya sistemi eklemelisin.
+</div>
+{% endif %}
+
+{% if user.role == 'admin' and not is_parent %}
+<details style="margin-top:16px" {% if not batteries %}open{% endif %}>
+  <summary style="cursor:pointer; color:var(--amber); font-weight:600; padding:8px 0">
+    + Yeni BESS ekle
+  </summary>
+  <div class="card pad" style="margin-top:10px; max-width:520px">
+    <form method="post" action="/ui/plants/{{ plant.id }}/bess/yeni">
+      <label>Kimya</label>
+      <input name="chemistry" value="NMC-21700" placeholder="ör. NMC-21700, LFP">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+        <div><label>Enerji (kWh) *</label>
+          <input name="rated_energy_kwh" type="number" step="0.1" min="0" required
+                 placeholder="ör. 600"></div>
+        <div><label>Güç (kW) *</label>
+          <input name="rated_power_kw" type="number" step="0.1" min="0" required
+                 placeholder="ör. 300"></div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px">
+        <div><label>Seri hücre</label>
+          <input name="cells_series" type="number" min="1" value="1"></div>
+        <div><label>Paralel</label>
+          <input name="cells_parallel" type="number" min="1" value="1"></div>
+        <div><label>Paket</label>
+          <input name="pack_count" type="number" min="1" value="1"></div>
+      </div>
+      <div style="margin-top:16px">
+        <button class="primary" style="width:100%; justify-content:center">
+          BESS ekle</button>
+      </div>
+    </form>
+  </div>
+</details>
 {% endif %}
 {% endblock %}
+
+{% block scripts %}
+{% if is_parent and child_sites_json != "[]" %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+.leaflet-popup-content-wrapper{background:#141a23; color:var(--text); border:1px solid var(--line)}
+.leaflet-popup-content{margin:10px; font-family:var(--sans)}
+.leaflet-popup-tip{background:#141a23; border:1px solid var(--line)}
+</style>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  var sites = {{ child_sites_json | safe }};
+  if(sites.length > 0) {
+    var map = L.map('map-container');
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+
+    var markers = [];
+    var amberIcon = L.divIcon({
+      className: 'custom-div-icon',
+      html: "<div style='background-color:var(--amber); width:14px; height:14px; border-radius:50%; border:2px solid #231802; box-shadow:0 0 8px rgba(242,181,68,0.5);'></div>",
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    });
+
+    sites.forEach(function(s) {
+      if(s.lat && s.lon) {
+        var m = L.marker([s.lat, s.lon], {icon: amberIcon}).addTo(map);
+        m.bindPopup('<b>' + s.name + '</b><br>' + s.capacity + ' kWp');
+        markers.push(m);
+      }
+    });
+
+    if (markers.length > 1) {
+      map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
+    } else if (markers.length === 1) {
+      map.setView([sites[0].lat, sites[0].lon], 13);
+    }
+    setTimeout(function(){ map.invalidateSize(); }, 200);
+  }
+</script>
+{% endif %}
+{% endblock %}
+

@@ -14,6 +14,7 @@ app = Celery(
         "luminmind.workers.tasks.ingestion",
         "luminmind.workers.tasks.downsample",
         "luminmind.workers.tasks.twin",
+        "luminmind.workers.tasks.forecast",
         "luminmind.workers.tasks.comparison",
         "luminmind.workers.tasks.arbitrage",
     ],
@@ -30,7 +31,7 @@ app.conf.update(
 app.conf.beat_schedule = {
     "ingest-all-plants": {
         "task": "luminmind.ingest_all_plants",
-        # 15 dk'lık üretici verisi aralığıyla hizalı (PLAN.md Faz 1)
+        # Üreticiden 5 dk aralıklarla çekim — Tescom yerel API'si anlık veriyi tazeliyor
         "schedule": crontab(minute=f"*/{settings.ingestion_interval_minutes}"),
     },
     "compute-expected-generation": {
@@ -52,5 +53,11 @@ app.conf.beat_schedule = {
         "task": "luminmind.plan_arbitrage",
         # 12:00 UTC = 15:00 TRT (GÖP sonuçları ~14:00 TRT'de açıklanır): yarının planı
         "schedule": crontab(minute=0, hour=12),
+    },
+    "forecast-generation": {
+        "task": "luminmind.forecast_generation",
+        # Günde 4 kez (00/06/12/18 UTC): yarının üretim tahminini güncel hava
+        # tahminiyle tazele — GÖP teklifi ve dengeleme için gün-öncesi öngörü
+        "schedule": crontab(minute=15, hour="*/6"),
     },
 }

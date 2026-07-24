@@ -8,6 +8,7 @@ olarak üretilir (charts.py). Saatler TRT gösterilir.
 import csv
 import io
 import json
+import logging
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
@@ -19,7 +20,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from luminmind.analytics.comparison import plant_actual_from_samples
@@ -41,7 +42,16 @@ from luminmind.core.security import (
     hash_password,
     verify_password,
 )
-from luminmind.web.charts import Series, line_chart, price_plan_chart, sparkline
+from luminmind.web.charts import (
+    Series,
+    daily_bar_chart,
+    line_chart,
+    price_plan_chart,
+    sparkline,
+    waterfall_chart,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ui", tags=["web"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -100,6 +110,25 @@ def _parse_day(value: str | None, default: date) -> date:
         return default
 
 
+# Kurulu gücün kaç katına kadar okuma "makul" sayılır (invertör aşırı-boyutlandırma
+# + ölçüm toleransı). Bunun üstü fiziksel olarak imkânsız — sensör/iletişim hatası.
+_POWER_SANITY_FACTOR = 1.25
+
+
+def _drop_power_outliers(
+    series: dict[datetime, float], capacity_kw: float | None
+) -> dict[datetime, float]:
+    """Kurulu gücü aşırı aşan (imkânsız) güç okumalarını eler — veri kalite kapısı.
+
+    Kapasite bilinmiyorsa (0/None) dokunmaz. Tek bir bozuk okumanın tüm günün
+    tepe gücünü, enerjisini ve PR'ını bozmasını engeller (IEC 61724 veri kalitesi).
+    """
+    if not capacity_kw or capacity_kw <= 0:
+        return series
+    cap = capacity_kw * _POWER_SANITY_FACTOR
+    return {ts: v for ts, v in series.items() if v <= cap}
+
+
 def _fmt_int(x: float | int) -> str:
     return f"{int(round(x)):,}".replace(",", ".")
 
@@ -113,8 +142,13 @@ async def sidebar_plants_context(
 ) -> tuple[list[dict[str, Any]], list[Plant]]:
     """Sol menüde listelenecek tesisleri ve açık anomali sayaçlarını döndürür.
 
-    Bir liste (görüntüleme için sözlükler) + ham Plant listesi döner; ikincisi
-    çağıran route'ların ilk-tesis vb. seçim yapmasına yarar.
+    Aynı üst başlığı paylaşan tesisleri (ör. "Tescom İzmir GES · Mekanik" ve
+    "Tescom İzmir GES · Uretim") tek bir grup altında toplar. Üst başlık ile
+    birebir eşleşen bir tesis varsa (eski tekil kayıt) grup başlığı ona
+    tıklanabilir olur; yoksa yalnızca ayraç metni olarak görünür.
+
+    Her giriş `{id, name, open_anomalies, children, is_group}` biçimindedir.
+    Alt tesisler `children` içinde aynı şemayla listelenir.
     """
     plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
     if not plants:
@@ -130,10 +164,33 @@ async def sidebar_plants_context(
         )
     ).all()
     counts = {row[0]: row[1] for row in counts_rows}
-    return [
-        {"id": p.id, "name": p.name, "open_anomalies": counts.get(p.id, 0)}
-        for p in plants
-    ], list(plants)
+    plants_by_name = {p.name: p for p in plants}
+    plant_items: dict[uuid.UUID, dict[str, Any]] = {}
+
+    for p in plants:
+        plant_items[p.id] = {
+            "id": p.id,
+            "name": p.name,
+            "short_name": p.name.split(" · ")[-1] if " · " in p.name else p.name,
+            "open_anomalies": counts.get(p.id, 0),
+            "children": [],
+        }
+
+    top_level: list[dict[str, Any]] = []
+    for p in plants:
+        if " · " in p.name:
+            parent_name = p.name.split(" · ")[0]
+            if parent_name in plants_by_name:
+                parent_id = plants_by_name[parent_name].id
+                plant_items[parent_id]["children"].append(plant_items[p.id])
+                continue
+        top_level.append(plant_items[p.id])
+
+    # Parent rozet sayacına child'ların açık anomali sayısını da yay.
+    for item in top_level:
+        item["open_anomalies"] += sum(c["open_anomalies"] for c in item["children"])
+
+    return top_level, list(plants)
 
 
 def _as_utc(ts: datetime | None) -> datetime | None:
@@ -217,6 +274,14 @@ async def overview(
     now = datetime.now(tz=UTC)
     start, stop = _trt_day_window(now.astimezone(TRT).date())
 
+    # Tesis eğrilerini plant detay grafiğiyle aynı yoldan üret: ham örnekleri
+    # 5 dk bucket'a topla (cihaz zigzag'ı/spike'ı olmadan gerçek toplam AC güç).
+    actual_by_plant: dict[str, dict[datetime, float]] = {}
+    if influx is not None:
+        actual_by_plant = plant_actual_from_samples(
+            await influx.query_raw_window(start, min(stop, now))
+        )
+
     plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
     open_counts_rows = (
         await session.execute(
@@ -227,25 +292,86 @@ async def overview(
     ).all()
     open_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in open_counts_rows}
 
+    children_by_parent_name: dict[str, list[Plant]] = {}
+    top_level_plants: list[Plant] = []
+
+    for p in plants:
+        if " · " in p.name:
+            parent_name = p.name.split(" · ")[0]
+            children_by_parent_name.setdefault(parent_name, []).append(p)
+        else:
+            top_level_plants.append(p)
+
     total_power = 0.0
     total_energy = 0.0
     plants_producing = 0
     cards: list[dict[str, Any]] = []
-    for plant in plants:
+    for plant in top_level_plants:
         last_power_val = 0.0
         today_energy_val = 0.0
         series: list[tuple[datetime, float]] = []
+        children = children_by_parent_name.get(plant.name, [])
+        is_parent = len(children) > 0
+
         if influx is not None:
-            series = await influx.query_plant_series(
-                plant.vendor_plant_id, "ac_power_kw", start, min(stop, now), "15m"
-            )
+            if is_parent:
+                combined_series: dict[datetime, float] = {}
+                for child in children:
+                    for t, v in actual_by_plant.get(child.vendor_plant_id, {}).items():
+                        combined_series[t] = combined_series.get(t, 0.0) + v
+                raw_series = combined_series
+            else:
+                raw_series = dict(actual_by_plant.get(plant.vendor_plant_id, {}))
+            # Veri kalite kapısı: imkânsız güç okumalarını ele
+            if is_parent:
+                cap_kw = sum(
+                    (c.ac_capacity_kw or c.dc_capacity_kwp or 0.0) for c in children
+                )
+            else:
+                cap_kw = plant.ac_capacity_kw or plant.dc_capacity_kwp or 0.0
+            series = sorted(_drop_power_outliers(raw_series, cap_kw or None).items())
             if series:
                 last_power_val = float(series[-1][1])
-                today_energy_val = sum(v for _, v in series) * 0.25
+                # 5 dk bucket → kWh = sum(kw) × 5/60
+                today_energy_val = sum(v for _, v in series) * (5.0 / 60.0)
+
+        inverters = []
+        if is_parent:
+            for c in children:
+                inverters.extend(await c.awaitable_attrs.inverters)
+        else:
+            inverters = list(await plant.awaitable_attrs.inverters)
+
+        # Cache-Influx önceliği: cihaz cache'i sadece polling penceresi içinde
+        # canlı sayılır (2 × ingestion_interval, STALE_AFTER ile kapaklı).
+        from luminmind.analytics.inverter_health import fresh_window
+        _fw = fresh_window(settings.ingestion_interval_minutes)
+        _now = datetime.now(tz=UTC)
+        fresh_invs = [
+            inv for inv in inverters
+            if inv.last_seen_at is not None
+            and (_now - _as_utc(inv.last_seen_at)) <= _fw  # type: ignore[operator]
+        ]
+        inv_power_sum = sum((inv.last_power_kw or 0.0) for inv in fresh_invs)
+        inv_daily_sum = sum(
+            (inv.last_energy_daily_kwh or 0.0) for inv in fresh_invs
+            if inv.last_energy_daily_kwh is not None
+        )
+        if inv_power_sum > 0:
+            last_power_val = inv_power_sum
+        if inv_daily_sum > 0:
+            today_energy_val = inv_daily_sum
         total_power += last_power_val
         total_energy += today_energy_val
         if last_power_val > 0.1:
             plants_producing += 1
+
+        plant_open_anomalies = open_counts.get(plant.id, 0)
+        capacity = plant.dc_capacity_kwp or 0.0
+        if is_parent:
+            plant_open_anomalies += sum(open_counts.get(c.id, 0) for c in children)
+            capacity += sum((c.dc_capacity_kwp or 0.0) for c in children)
+
         status_class = "ok" if last_power_val > 0.1 else "muted"
         status_label = "Üretiyor" if last_power_val > 0.1 else "Bekliyor"
         cards.append(
@@ -257,10 +383,10 @@ async def overview(
                 "today_energy": (
                     f"{_fmt_int(today_energy_val)} kWh" if influx is not None else "—"
                 ),
-                "open_anomalies": open_counts.get(plant.id, 0),
+                "open_anomalies": plant_open_anomalies,
                 "capacity_label": (
-                    f"{_fmt_1(plant.dc_capacity_kwp)} kWp"
-                    if plant.dc_capacity_kwp
+                    f"{_fmt_1(capacity)} kWp"
+                    if capacity
                     else "kapasite tanımsız"
                 ),
                 "status_class": status_class,
@@ -297,10 +423,7 @@ async def overview(
         for e in recent_events_rows
     ]
 
-    sidebar_plants = [
-        {"id": p.id, "name": p.name, "open_anomalies": open_counts.get(p.id, 0)}
-        for p in plants
-    ]
+    sidebar_plants, _ = await sidebar_plants_context(session)
     return templates.TemplateResponse(
         request,
         "overview.html",
@@ -334,7 +457,7 @@ async def map_page(
     sites = [
         {"name": p.name, "lat": p.latitude, "lon": p.longitude, "capacity": p.dc_capacity_kwp}
         for p in plants
-        if p.latitude is not None and p.longitude is not None
+        if " · " not in p.name and p.latitude is not None and p.longitude is not None
     ]
     return templates.TemplateResponse(
         request,
@@ -370,6 +493,89 @@ async def _open_anomaly_count(session: AsyncSession, plant_id: uuid.UUID) -> int
     return int(result.scalar() or 0)
 
 
+async def _forecast_revenue(
+    points: list[tuple[datetime, float]], day: date, settings: Settings
+) -> float:
+    """Tahmini üretimi GÖP fiyatlarıyla çarpıp yaklaşık günlük gelir verir (TL).
+
+    Fiyat kaynağı arbitrajla aynı: mock modda temsili profil, aksi hâlde EPİAŞ.
+    """
+    from luminmind.analytics.arbitrage.epias import EpiasClient
+    from luminmind.analytics.arbitrage.mock_prices import MockPriceProvider
+
+    client: EpiasClient | None = None
+    if settings.lm_use_mock_prices or not settings.epias_base_url:
+        provider: Any = MockPriceProvider()
+    else:
+        client = EpiasClient(base_url=settings.epias_base_url)
+        provider = client
+    try:
+        slots = await provider.fetch_day_ahead_prices(day)
+    except Exception:
+        logger.exception("forecast revenue: price fetch failed")
+        return 0.0
+    finally:
+        if client is not None:
+            await client.aclose()
+
+    def _hour(ts: datetime) -> datetime:
+        return ts.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+
+    price_by_hour = {_hour(s.start): s.price_try_mwh for s in slots}
+    revenue = 0.0
+    for ts, kw in points:
+        energy_mwh = kw * 0.25 / 1000.0  # 15 dk dilim
+        revenue += energy_mwh * price_by_hour.get(_hour(ts), 0.0)
+    return revenue
+
+
+async def _twin_forecast_series(
+    influx: Any,
+    plant: Plant,
+    children: "Sequence[Plant]",
+    is_parent: bool,
+    day: date,
+) -> list[tuple[datetime, float]]:
+    """Verilen gün için twin (beklenen/tahmin) serisini tesis toplamı olarak döndürür."""
+    if influx is None:
+        return []
+    fstart, fstop = _trt_day_window(day)
+    twin = await influx.query_twin_window(fstart, fstop)
+    forecast: dict[datetime, float] = {}
+    if is_parent:
+        for c in children:
+            for t, v in twin.get(c.vendor_plant_id, {}).items():
+                forecast[t] = forecast.get(t, 0.0) + v
+    else:
+        forecast = dict(twin.get(plant.vendor_plant_id, {}))
+    return sorted(forecast.items())
+
+
+async def _plant_forecast(
+    influx: Any,
+    plant: Plant,
+    children: "Sequence[Plant]",
+    is_parent: bool,
+    settings: Settings,
+) -> tuple[dict[str, str] | None, str]:
+    """Yarının üretim tahminini (twin_expected, gelecek gün) döndürür + gelir tahmini."""
+    tomorrow = (datetime.now(tz=TRT) + timedelta(days=1)).date()
+    pts = await _twin_forecast_series(influx, plant, children, is_parent, tomorrow)
+    if not pts:
+        return None, ""
+    f_energy = sum(v for _, v in pts) * 0.25
+    f_peak = max(v for _, v in pts)
+    revenue = await _forecast_revenue(pts, tomorrow, settings)
+    kpis = {
+        "date": tomorrow.strftime("%d.%m.%Y"),
+        "energy": _fmt_int(f_energy),
+        "peak": _fmt_int(f_peak),
+        "revenue": f"{revenue:,.0f}".replace(",", "."),
+    }
+    chart = line_chart([Series("Tahmin", "#8a7dd6", pts)], TRT, unit="kW")
+    return kpis, chart
+
+
 @router.get("/plants/{plant_id}", response_class=HTMLResponse)
 async def plant_detail(
     request: Request,
@@ -378,6 +584,11 @@ async def plant_detail(
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
     plant = await _load_plant(session, plant_id)
+    children = (await session.scalars(
+        select(Plant).where(Plant.name.startswith(f"{plant.name} · "))
+    )).all()
+    is_parent = len(children) > 0
+
     day = _parse_day(request.query_params.get("date"), datetime.now(tz=TRT).date())
     start, stop = _trt_day_window(day)
 
@@ -385,34 +596,188 @@ async def plant_detail(
     peak_kw = 0.0
     energy_kwh = 0.0
     expected_kwh = 0.0
+    actual: dict[datetime, float] = {}
+    expected: dict[datetime, float] = {}
     influx = request.app.state.influx
+    settings: Settings = request.app.state.settings
     if influx is not None:
-        actual = plant_actual_from_samples(await influx.query_raw_window(start, stop)).get(
-            plant.vendor_plant_id, {}
-        )
-        expected = (await influx.query_twin_window(start, stop)).get(plant.vendor_plant_id, {})
+        actual_dict = plant_actual_from_samples(await influx.query_raw_window(start, stop))
+        expected_dict = await influx.query_twin_window(start, stop)
+
+        if is_parent:
+            child_ids = [c.vendor_plant_id for c in children]
+            for cid in child_ids:
+                for t, v in actual_dict.get(cid, {}).items():
+                    actual[t] = actual.get(t, 0.0) + v
+                for t, v in expected_dict.get(cid, {}).items():
+                    expected[t] = expected.get(t, 0.0) + v
+        else:
+            actual = actual_dict.get(plant.vendor_plant_id, {})
+            expected = expected_dict.get(plant.vendor_plant_id, {})
+
+        # Veri kalite kapısı: kurulu gücü aşırı aşan (imkânsız) okumaları ele
+        if is_parent:
+            cap_kw = sum(
+                (c.ac_capacity_kw or c.dc_capacity_kwp or 0.0) for c in children
+            )
+        else:
+            cap_kw = plant.ac_capacity_kw or plant.dc_capacity_kwp or 0.0
+        actual = _drop_power_outliers(actual, cap_kw or None)
+
         if actual:
             series.append(Series("Gerçek", "#f2b544", sorted(actual.items())))
             peak_kw = max(actual.values())
-            energy_kwh = sum(actual.values()) * 0.25
+            # plant_actual_from_samples 5 dk bucket üretir → kWh = sum(kw) × 5/60
+            energy_kwh = sum(actual.values()) * (5.0 / 60.0)
         if expected:
             series.append(Series("Beklenen", "#5aa1e3", sorted(expected.items())))
+            # Twin (Open-Meteo) hâlâ 15 dk çözünürlükte → sum(kw) × 15/60
             expected_kwh = sum(expected.values()) * 0.25
 
     pr = 0.0
+    ui_energy_kwh = energy_kwh
+
+    inverters = []
+    batteries = []
+    plant_label_by_id: dict[uuid.UUID, str] = {}
+    if is_parent:
+        for c in children:
+            inverters.extend(await c.awaitable_attrs.inverters)
+            batteries.extend(await c.awaitable_attrs.batteries)
+            plant_label_by_id[c.id] = c.name.split(" · ")[-1]
+    else:
+        inverters = list(await plant.awaitable_attrs.inverters)
+        batteries = list(await plant.awaitable_attrs.batteries)
+
+    inverter_rows = _build_inverter_rows(
+        inverters,
+        plant_label_by_id if is_parent else None,
+    )
+    # Cihaz gün-toplam sayacı (last_energy_daily_kwh) yalnızca BUGÜN görüntülenirken
+    # geçerlidir — gece yarısı sıfırlanan anlık bir değerdir, geçmiş günü temsil etmez.
+    # Geçmiş günlerde Influx'tan hesaplanan enerji (energy_kwh) kullanılır.
+    from luminmind.analytics.inverter_health import fresh_window
+    is_today = day == datetime.now(tz=TRT).date()
+    _fw = fresh_window(settings.ingestion_interval_minutes)
+    now_utc = datetime.now(tz=UTC)
+    fresh_inverters = [
+        inv for inv in inverters
+        if inv.last_seen_at is not None
+        and (now_utc - _as_utc(inv.last_seen_at)) <= _fw  # type: ignore[operator]
+        and inv.last_energy_daily_kwh is not None
+    ]
+    daily_sum = sum((inv.last_energy_daily_kwh or 0.0) for inv in fresh_inverters)
+    use_device_daily = is_today and daily_sum > 0
+    if use_device_daily:
+        ui_energy_kwh = daily_sum
+
     if expected_kwh > 1.0:
-        pr = min(200.0, energy_kwh / expected_kwh * 100.0)
+        pr = min(200.0, ui_energy_kwh / expected_kwh * 100.0)
     kpis = {
         "peak_kw": _fmt_int(peak_kw) if peak_kw else "—",
-        "energy_kwh": _fmt_int(energy_kwh) if energy_kwh else "—",
+        "energy_kwh": _fmt_int(ui_energy_kwh) if ui_energy_kwh else "—",
+        "energy_trend": "cihaz verisi" if use_device_daily else "ölçüm toplamı",
         "expected_kwh": _fmt_int(expected_kwh) if expected_kwh else "—",
         "pr": _fmt_1(pr) if pr else "—",
         "pr_ok": pr >= 85.0,
     }
 
-    inverters = await plant.awaitable_attrs.inverters
-    inverter_rows = _build_inverter_rows(inverters)
+    # IEC 61724 performans göstergeleri + kayıp şelalesi
+    perf_kpis: dict[str, str] | None = None
+    waterfall_svg = ""
+    if influx is not None and actual and expected:
+        from luminmind.analytics.performance import (
+            compute_kpis,
+            compute_loss_waterfall,
+        )
+
+        dc_kwp = plant.dc_capacity_kwp or 0.0
+        ac_kw = plant.ac_capacity_kw or 0.0
+        if is_parent:
+            dc_kwp = sum((c.dc_capacity_kwp or 0.0) for c in children)
+            ac_kw = sum((c.ac_capacity_kw or 0.0) for c in children)
+
+        # POA/hücre sıcaklığı — twin varsa tam şelale, yoksa 2 basamak
+        poa: dict[datetime, float] = {}
+        cell_temp: dict[datetime, float] = {}
+        detail_fn = getattr(influx, "query_twin_detail_window", None)
+        if detail_fn is not None:
+            detail = await detail_fn(start, stop)
+            vplant_ids = (
+                [c.vendor_plant_id for c in children] if is_parent
+                else [plant.vendor_plant_id]
+            )
+            # POA/sıcaklık tesisler arası ortalanır (aynı meteoroloji), beklenen toplanır
+            poa_acc: dict[datetime, list[float]] = {}
+            temp_acc: dict[datetime, list[float]] = {}
+            for vid in vplant_ids:
+                for ts, fields in detail.get(vid, {}).items():
+                    if "poa" in fields:
+                        poa_acc.setdefault(ts, []).append(fields["poa"])
+                    if "cell_temp" in fields:
+                        temp_acc.setdefault(ts, []).append(fields["cell_temp"])
+            poa = {ts: sum(vs) / len(vs) for ts, vs in poa_acc.items()}
+            cell_temp = {ts: sum(vs) / len(vs) for ts, vs in temp_acc.items()}
+
+        # Kısmi gün (bugün) düzeltmesi: beklenen/POA/sıcaklık, gerçek verinin
+        # bittiği ana kadar kırpılır — yoksa tam-gün teorik, sabahki kısmi
+        # gerçekle kıyaslanınca sahte "saha kaybı" üretir.
+        cutoff = max(actual) if actual else None
+        if cutoff is not None:
+            expected = {ts: v for ts, v in expected.items() if ts <= cutoff}
+            poa = {ts: v for ts, v in poa.items() if ts <= cutoff}
+            cell_temp = {ts: v for ts, v in cell_temp.items() if ts <= cutoff}
+
+        # Görüntülenen gün için elapsed saat (kapasite faktörü paydası)
+        period_h = 24.0
+        if is_today and cutoff is not None:
+            period_h = max(1.0, (cutoff - start).total_seconds() / 3600.0)
+
+        kpi = compute_kpis(
+            actual, expected, dc_capacity_kwp=dc_kwp or None,
+            ac_capacity_kw=ac_kw or None, period_hours=period_h,
+            actual_interval_h=5.0 / 60.0, expected_interval_h=0.25,
+            poa=poa or None, cell_temp=cell_temp or None,
+        )
+        stages = compute_loss_waterfall(
+            actual, expected, dc_capacity_kwp=dc_kwp or None,
+            actual_interval_h=5.0 / 60.0, expected_interval_h=0.25,
+            poa=poa or None, cell_temp=cell_temp or None,
+        )
+        perf_kpis = {
+            "specific_yield": (
+                f"{kpi.specific_yield:.2f}" if kpi.specific_yield is not None else "—"
+            ),
+            "capacity_factor": (
+                f"{kpi.capacity_factor_pct:.1f}" if kpi.capacity_factor_pct is not None else "—"
+            ),
+            "pr": f"{kpi.pr_pct:.1f}" if kpi.pr_pct is not None else "—",
+            "pr_temp": f"{kpi.pr_temp_pct:.1f}" if kpi.pr_temp_pct is not None else "—",
+            "availability": (
+                f"{kpi.availability_pct:.1f}" if kpi.availability_pct is not None else "—"
+            ),
+        }
+        waterfall_svg = waterfall_chart(
+            [(s.label, s.kwh, s.kind) for s in stages], unit="kWh"
+        )
+
+    # Gün-öncesi üretim tahmini (yarın) + tahmini gelir
+    forecast_kpis, forecast_chart = await _plant_forecast(
+        influx, plant, children, is_parent, settings
+    )
+
     sidebar_plants, _ = await sidebar_plants_context(session)
+
+    child_sites = []
+    if is_parent:
+        for c in children:
+            child_sites.append({
+                "id": str(c.id),
+                "name": c.name.split(" · ")[-1],
+                "lat": c.latitude,
+                "lon": c.longitude,
+                "capacity": c.dc_capacity_kwp
+            })
 
     return templates.TemplateResponse(
         request,
@@ -425,17 +790,33 @@ async def plant_detail(
             "plant_open_anomalies": await _open_anomaly_count(session, plant.id),
             "day_str": day.isoformat(),
             "kpis": kpis,
+            "perf_kpis": perf_kpis,
+            "waterfall_chart": waterfall_svg,
+            "forecast_kpis": forecast_kpis,
+            "forecast_chart": forecast_chart,
             "production_chart": line_chart(series, TRT, unit="kW"),
+            "is_parent": is_parent,
+            "child_sites_json": json.dumps(child_sites) if is_parent else "[]",
             "inverter_rows": inverter_rows,
-            "batteries": await plant.awaitable_attrs.batteries,
+            "batteries": batteries,
+            "bess_error": request.query_params.get("bess_error"),
+            "bess_success": request.query_params.get("bess_success"),
             "page_title": plant.name,
             "auto_refresh_s": 60,
         },
     )
 
 
-def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
-    """İnvertör tablosu için görsel satırları hazırlar (durum/rozet/sıcaklık rengi)."""
+def _build_inverter_rows(
+    inverters: "Sequence[Any]",
+    plant_label_by_id: "dict[uuid.UUID, str] | None" = None,
+) -> list[dict[str, Any]]:
+    """İnvertör tablosu için görsel satırları hazırlar (durum/rozet/sıcaklık rengi).
+
+    `plant_label_by_id` verilirse (parent görünümde alt tesisleri ayırmak için)
+    her satır `plant_label` alanı taşır — aynı `slave_id`'yi farklı fabrikalarda
+    ayırt etmeyi sağlar.
+    """
     from luminmind.analytics.inverter_health import (
         CRITICAL_OVERHEAT_C,
         OVERHEAT_C,
@@ -486,9 +867,14 @@ def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
         elif inv.last_status:
             error_or_status = inv.last_status
 
+        plant_label = ""
+        if plant_label_by_id is not None:
+            plant_label = plant_label_by_id.get(inv.plant_id, "")
         rows.append(
             {
                 "vendor_device_id": inv.vendor_device_id,
+                "plant_id": inv.plant_id,
+                "plant_label": plant_label,
                 "health_chip": health_chip,
                 "health_label": health_label,
                 "power": (
@@ -496,6 +882,11 @@ def _build_inverter_rows(inverters: "Sequence[Any]") -> list[dict[str, Any]]:
                 ),
                 "temp": f"{inv.last_temp_c:.1f} °C" if inv.last_temp_c is not None else "—",
                 "temp_color": temp_color,
+                "energy_daily": (
+                    f"{inv.last_energy_daily_kwh:.1f} kWh"
+                    if getattr(inv, "last_energy_daily_kwh", None) is not None
+                    else "—"
+                ),
                 "error_or_status": error_or_status,
                 "last_seen": last_seen_local,
             }
@@ -523,10 +914,15 @@ async def inverter_detail(
     )
 
     plant = await _load_plant(session, plant_id)
+    # Cihaz her zaman URL'deki tesise ait olmalı — parent'ın alt tesislerini
+    # burada aramıyoruz çünkü `slave_id` fabrikalar arasında çakışabilir
+    # (mekanik-1 ve uretim-1 farklı cihazlar). Parent URL'sinden bir cihaz
+    # açmak istenirse tablodaki link ilgili alt tesisin URL'sine gitmeli.
     inverter = (
         await session.scalars(
             select(Inverter).where(
-                Inverter.plant_id == plant.id, Inverter.vendor_device_id == device_id
+                Inverter.plant_id == plant.id,
+                Inverter.vendor_device_id == device_id,
             )
         )
     ).one_or_none()
@@ -549,6 +945,23 @@ async def inverter_detail(
 
     peak_power = max((v for _, v in power_points), default=0.0)
     energy_kwh = sum(v for _, v in power_points) * 0.25 if power_points else 0.0
+    # Üretici doğrudan cihaz başına gün-toplam kWh raporluyorsa (Tescom
+    # `gunluk_uretim_kwh`) onu tercih et — polling penceresi içindeyse.
+    from luminmind.analytics.inverter_health import fresh_window
+    settings: Settings = request.app.state.settings
+    _fw = fresh_window(settings.ingestion_interval_minutes)
+    # Cihaz gün-toplam sayacı yalnızca bugün geçerli (gece sıfırlanır);
+    # geçmiş günlerde Influx serisinden hesaplanan enerji kullanılır.
+    _is_today = day == datetime.now(tz=TRT).date()
+    _fresh = (
+        inverter.last_seen_at is not None
+        and (datetime.now(tz=UTC) - _as_utc(inverter.last_seen_at)) <= _fw  # type: ignore[operator]
+    )
+    if _is_today and _fresh and inverter.last_energy_daily_kwh is not None:
+        energy_kwh = inverter.last_energy_daily_kwh
+        energy_source = "cihaz verisi"
+    else:
+        energy_source = "ölçüm toplamı"
 
     # Sağlık rozeti — plant_detail'daki mantıkla aynı, tek satır için
     rows = _build_inverter_rows([inverter])
@@ -578,6 +991,7 @@ async def inverter_detail(
         "last_seen": last_seen_local,
         "peak_power": _fmt_int(peak_power) if peak_power else "—",
         "energy_kwh": _fmt_int(energy_kwh) if energy_kwh else "—",
+        "energy_source": energy_source,
         "last_temp": f"{inverter.last_temp_c:.1f}" if inverter.last_temp_c is not None else "—",
         "temp_color": temp_color,
         "temp_hot": inverter.last_temp_c is not None and inverter.last_temp_c > OVERHEAT_C,
@@ -846,18 +1260,61 @@ async def arbitrage_page(
     user: Annotated[User, Depends(get_web_user)],
 ) -> HTMLResponse:
     plant = await _load_plant(session, plant_id)
-    day = _parse_day(request.query_params.get("date"), datetime.now(tz=TRT).date())
+    # Parent görünümdeyse alt tesislerin bataryalarını da kapsa — böylece
+    # kullanıcı "Tescom İzmir GES · Mekanik" fabrikasına eklediği BESS'i
+    # üst başlıktan da görebilir (Genel Bakış / plant_detail agregasyonuyla
+    # tutarlı).
+    children = (await session.scalars(
+        select(Plant).where(Plant.name.startswith(f"{plant.name} · "))
+    )).all()
+    scoped_plant_ids = [plant.id, *[c.id for c in children]]
 
     battery_ids = (
-        await session.scalars(select(BatterySystem.id).where(BatterySystem.plant_id == plant.id))
+        await session.scalars(
+            select(BatterySystem.id).where(BatterySystem.plant_id.in_(scoped_plant_ids))
+        )
     ).all()
-    plan = (
+    # Varsayılan gün: URL'de yoksa bu tesisin en yeni mevcut planı, o da yoksa yarın
+    # (arbitraj planlaması bir sonraki gün için yapılır).
+    default_day = datetime.now(tz=TRT).date() + timedelta(days=1)
+    if battery_ids:
+        latest_day = (
+            await session.scalars(
+                select(ArbitragePlan.plan_date)
+                .where(ArbitragePlan.battery_id.in_(battery_ids))
+                .order_by(ArbitragePlan.plan_date.desc())
+                .limit(1)
+            )
+        ).first()
+        if latest_day is not None:
+            default_day = latest_day
+    day = _parse_day(request.query_params.get("date"), default_day)
+
+    day_plans = (
         await session.scalars(
             select(ArbitragePlan).where(
                 ArbitragePlan.battery_id.in_(battery_ids), ArbitragePlan.plan_date == day
             )
         )
-    ).first()
+    ).all()
+    plan = day_plans[0] if day_plans else None
+    arbitrage_revenue = sum(p.expected_revenue_try for p in day_plans)
+
+    # PV üretim tahmini (seçili gün) + tahmini satış geliri — depolama planının
+    # yanında tek yerde: forecast + storage + market (DeepSolar Predict).
+    influx = request.app.state.influx
+    settings: Settings = request.app.state.settings
+    is_parent_view = len(children) > 0
+    pv_points = await _twin_forecast_series(influx, plant, children, is_parent_view, day)
+    pv_energy = sum(v for _, v in pv_points) * 0.25 if pv_points else 0.0
+    pv_revenue = (
+        await _forecast_revenue(pv_points, day, settings) if pv_points else 0.0
+    )
+    combined_revenue = arbitrage_revenue + pv_revenue
+    pv_chart = (
+        line_chart([Series("PV tahmini", "#8a7dd6", pv_points)], TRT, unit="kW")
+        if pv_points else ""
+    )
 
     prices: list[tuple[datetime, float]] = []
     actions: dict[datetime, tuple[str, float]] = {}
@@ -892,8 +1349,62 @@ async def arbitrage_page(
             "slots": slot_rows,
             "chart": price_plan_chart(prices, actions, TRT),
             "action_labels": ACTION_LABELS,
+            "has_batteries": len(battery_ids) > 0,
+            "battery_count": len(battery_ids),
+            "arbitrage_revenue": arbitrage_revenue,
+            "combined_revenue": combined_revenue,
+            "pv_energy": _fmt_int(pv_energy) if pv_energy else "—",
+            "pv_revenue": f"{pv_revenue:,.0f}".replace(",", ".") if pv_revenue else "—",
+            "pv_chart": pv_chart,
+            "has_pv_forecast": bool(pv_points),
+            "is_parent_view": is_parent_view,
+            "notice": request.query_params.get("notice"),
             "page_title": f"{plant.name} · Arbitraj",
         },
+    )
+
+
+@router.post("/plants/{plant_id}/arbitrage/run")
+async def arbitrage_run(
+    request: Request,
+    plant_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+    date: Annotated[str, Form()] = "",
+) -> Response:
+    """Admin için manuel plan üretimi — beat'in 12:00 UTC'yi beklemeden."""
+    from luminmind.workers.tasks.arbitrage import run_arbitrage
+
+    plant = await _load_plant(session, plant_id)
+    target_day = _parse_day(date or None, datetime.now(tz=TRT).date() + timedelta(days=1))
+    settings: Settings = request.app.state.settings
+    # Bu tesise batarya yoksa sessiz dön — kullanıcıyı bilgilendirir.
+    battery_count = (
+        await session.scalar(
+            select(func.count()).where(BatterySystem.plant_id == plant.id)
+        )
+    )
+    if not battery_count:
+        return RedirectResponse(
+            f"/ui/plants/{plant.id}/arbitrage?date={target_day.isoformat()}"
+            f"&notice=no-battery",
+            status_code=303,
+        )
+    try:
+        # run_arbitrage tüm bataryalar için çalışır; bu tesise ait olanlar Postgres'ten
+        # zaten filtreleniyor (aşağıdaki task tesis bazlı değil, batarya bazlı).
+        # engine'i app state'den geçir — test suit'i SQLite kullanır, task kendi
+        # Postgres bağlantısını kurmaya çalışmasın.
+        await run_arbitrage(
+            settings=settings, day=target_day, engine=request.app.state.engine
+        )
+        notice = "ok"
+    except Exception:
+        logger.exception("manual arbitrage run failed plant=%s day=%s", plant.id, target_day)
+        notice = "failed"
+    return RedirectResponse(
+        f"/ui/plants/{plant.id}/arbitrage?date={target_day.isoformat()}&notice={notice}",
+        status_code=303,
     )
 
 
@@ -922,7 +1433,8 @@ async def _load_daily_report(
             exp = expected.get(p.vendor_plant_id, {})
             if not actual and not exp:
                 continue
-            energy = sum(actual.values()) * 0.25
+            # actual 5 dk bucket (plant_actual_from_samples), expected 15 dk (twin)
+            energy = sum(actual.values()) * (5.0 / 60.0)
             expected_kwh = sum(exp.values()) * 0.25
             peak = max(actual.values()) if actual else 0.0
             pr = (
@@ -989,11 +1501,7 @@ async def reports_page(
         (datetime(d.year, d.month, d.day, tzinfo=TRT), v)
         for d, v in sorted(daily_totals.items())
     ]
-    energy_chart = line_chart(
-        [Series("Portföy enerjisi", "#f2b544", energy_points)],
-        TRT,
-        unit="kWh",
-    )
+    energy_chart = daily_bar_chart(energy_points, TRT, unit="kWh", color="#f2b544")
 
     def _pr_color(pr: float) -> str:
         if pr <= 0:
@@ -1112,6 +1620,83 @@ def _opt_float(value: str | None) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+@router.get("/tesisler", response_class=HTMLResponse)
+async def plants_manage_page(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(require_admin)],
+    error: str | None = None,
+    success: str | None = None,
+) -> HTMLResponse:
+    """Tesis yönetimi — tüm tesisleri listele, düzenle/sil linklerini göster."""
+    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
+    inv_counts_rows = (
+        await session.execute(
+            select(Inverter.plant_id, func.count()).group_by(Inverter.plant_id)
+        )
+    ).all()
+    inv_counts = {row[0]: row[1] for row in inv_counts_rows}
+    plant_rows = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "vendor": p.vendor,
+            "vendor_plant_id": p.vendor_plant_id,
+            "capacity_label": (
+                f"{_fmt_1(p.dc_capacity_kwp)} kWp"
+                if p.dc_capacity_kwp
+                else "—"
+            ),
+            "inv_count": inv_counts.get(p.id, 0),
+            "coord_label": (
+                f"{p.latitude:.3f}, {p.longitude:.3f}"
+                if p.latitude is not None and p.longitude is not None
+                else "—"
+            ),
+        }
+        for p in plants
+    ]
+    sidebar_plants, _ = await sidebar_plants_context(session)
+    return templates.TemplateResponse(
+        request,
+        "plants_manage.html",
+        {
+            "user": user,
+            "section": "plants-manage",
+            "plant": None,
+            "sidebar_plants": sidebar_plants,
+            "plants": plant_rows,
+            "error": error, "success": success,
+            "page_title": "Tesis yönetimi",
+        },
+    )
+
+
+@router.post("/tesisler/{plant_id}/sil")
+async def plant_delete(
+    plant_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> Response:
+    """Tesisi kaskad olarak siler — invertörler, PV dizileri, BESS, kimlik bilgisi ve
+    anomali olayları da otomatik silinir (cascade). Influx'taki geçmiş veri kalır."""
+    plant = await session.get(Plant, plant_id)
+    if plant is None:
+        return RedirectResponse(
+            "/ui/tesisler?error=" + quote("Tesis bulunamadı"), status_code=303
+        )
+    # AnomalyEvent'lerde cascade yok — elle temizle
+    await session.execute(
+        delete(AnomalyEvent).where(AnomalyEvent.plant_id == plant_id)
+    )
+    plant_name = plant.name
+    await session.delete(plant)
+    return RedirectResponse(
+        "/ui/tesisler?success=" + quote(f"'{plant_name}' silindi"),
+        status_code=303,
+    )
 
 
 @router.get("/tesisler/yeni", response_class=HTMLResponse)
@@ -1265,6 +1850,101 @@ async def plant_edit_submit(
     plant.ac_capacity_kw = _opt_float(ac_capacity_kw)
     plant.timezone = timezone or "Europe/Istanbul"
     return RedirectResponse(f"/ui/plants/{plant.id}", status_code=303)
+
+
+# ------------------------------ BESS management ------------------------------
+
+
+@router.post("/plants/{plant_id}/bess/yeni")
+async def bess_new(
+    plant_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+    chemistry: Annotated[str, Form()] = "NMC-21700",
+    rated_energy_kwh: Annotated[str, Form()] = "",
+    rated_power_kw: Annotated[str, Form()] = "",
+    cells_series: Annotated[str, Form()] = "1",
+    cells_parallel: Annotated[str, Form()] = "1",
+    pack_count: Annotated[str, Form()] = "1",
+) -> Response:
+    """Tesise yeni bir BESS ekler. Enerji/güç zorunlu; hücre topolojisi opsiyonel."""
+    plant = await _load_plant(session, plant_id)
+    energy = _opt_float(rated_energy_kwh)
+    power = _opt_float(rated_power_kw)
+    if energy is None or power is None or energy <= 0 or power <= 0:
+        return RedirectResponse(
+            f"/ui/plants/{plant.id}?bess_error="
+            + quote("Enerji (kWh) ve Güç (kW) zorunlu ve pozitif olmalı"),
+            status_code=303,
+        )
+    session.add(BatterySystem(
+        plant_id=plant.id,
+        chemistry=chemistry or "NMC-21700",
+        rated_energy_kwh=energy,
+        rated_power_kw=power,
+        cells_series=int(_opt_float(cells_series) or 1),
+        cells_parallel=int(_opt_float(cells_parallel) or 1),
+        pack_count=int(_opt_float(pack_count) or 1),
+    ))
+    return RedirectResponse(
+        f"/ui/plants/{plant.id}?bess_success="
+        + quote(f"{energy:.1f} kWh / {power:.1f} kW BESS eklendi"),
+        status_code=303,
+    )
+
+
+@router.post("/plants/{plant_id}/bess/{bess_id}/duzenle")
+async def bess_edit(
+    plant_id: uuid.UUID,
+    bess_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+    chemistry: Annotated[str, Form()] = "NMC-21700",
+    rated_energy_kwh: Annotated[str, Form()] = "",
+    rated_power_kw: Annotated[str, Form()] = "",
+    cells_series: Annotated[str, Form()] = "1",
+    cells_parallel: Annotated[str, Form()] = "1",
+    pack_count: Annotated[str, Form()] = "1",
+) -> Response:
+    bess = await session.get(BatterySystem, bess_id)
+    if bess is None or bess.plant_id != plant_id:
+        raise HTTPException(status_code=404, detail="bess not found")
+    energy = _opt_float(rated_energy_kwh)
+    power = _opt_float(rated_power_kw)
+    if energy is None or power is None or energy <= 0 or power <= 0:
+        return RedirectResponse(
+            f"/ui/plants/{plant_id}?bess_error="
+            + quote("Enerji ve Güç zorunlu ve pozitif olmalı"),
+            status_code=303,
+        )
+    bess.chemistry = chemistry or "NMC-21700"
+    bess.rated_energy_kwh = energy
+    bess.rated_power_kw = power
+    bess.cells_series = int(_opt_float(cells_series) or 1)
+    bess.cells_parallel = int(_opt_float(cells_parallel) or 1)
+    bess.pack_count = int(_opt_float(pack_count) or 1)
+    return RedirectResponse(
+        f"/ui/plants/{plant_id}?bess_success=" + quote("BESS güncellendi"),
+        status_code=303,
+    )
+
+
+@router.post("/plants/{plant_id}/bess/{bess_id}/sil")
+async def bess_delete(
+    plant_id: uuid.UUID,
+    bess_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> Response:
+    """BESS silinir; bağlı arbitraj planları cascade ile birlikte silinir."""
+    bess = await session.get(BatterySystem, bess_id)
+    if bess is None or bess.plant_id != plant_id:
+        raise HTTPException(status_code=404, detail="bess not found")
+    await session.delete(bess)
+    return RedirectResponse(
+        f"/ui/plants/{plant_id}?bess_success=" + quote("BESS silindi"),
+        status_code=303,
+    )
 
 
 # ------------------------------ User management ------------------------------

@@ -12,8 +12,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "5432:5432"
+    # Host port'u yayınlamıyoruz: uygulama (init/api/worker/beat) Postgres'e
+    # compose ağı üzerinden `postgres:5432` ile bağlanır — host'a açmak gerekmez.
+    # Makinede native bir PostgreSQL 5432'yi tutuyorsa çakışma yaşanmaz.
+    # Host'tan psql/DBeaver ile bağlanmak istersen alttaki iki satırı aç
+    # (boş bir host portu seç, ör. 5434):
+    # ports:
+    #   - "5434:5432"
 
   influxdb:
     image: influxdb:2.7-alpine

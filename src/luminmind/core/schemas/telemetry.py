@@ -63,6 +63,7 @@ class TelemetryPoint(BaseModel):
     dc_voltage_v: float | None = None
     dc_current_a: float | None = None
     energy_total_kwh: float | None = None
+    energy_daily_kwh: float | None = None
     temp_c: float | None = None
     # Cihaz sağlığı — üretici raporladıysa (Tescom `hata_kodu` / `durum`);
     # Influx'a yazılmaz, Postgres inverters.last_* alanlarına akar.
@@ -84,6 +85,7 @@ class TelemetryPoint(BaseModel):
             "dc_voltage_v": self.dc_voltage_v,
             "dc_current_a": self.dc_current_a,
             "energy_total_kwh": self.energy_total_kwh,
+            "energy_daily_kwh": self.energy_daily_kwh,
             "temp_c": self.temp_c,
         }
         return {name: value for name, value in fields.items() if value is not None}

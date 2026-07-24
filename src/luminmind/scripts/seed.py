@@ -54,28 +54,12 @@ async def _seed_tescom_plant(session: AsyncSession, admin: User) -> None:
     Böylece gerçek üretim verisi arayüzde/haritada görünür ve (kapasite girildiyse)
     dijital ikiz beklenen üretimi hesaplar. Depolama (BESS) tanımlanmaz — PV izleme.
     """
-    settings = get_settings()
-    if not settings.tescom_base_url:
-        return
-    existing = (
-        await session.scalars(
-            select(Plant).where(Plant.vendor_plant_id == settings.tescom_plant_id)
-        )
-    ).one_or_none()
-    if existing is not None:
-        return
-    plant = Plant(
-        owner=admin,
-        name=settings.tescom_plant_name,
-        vendor=Vendor.TESCOM.value,
-        vendor_plant_id=settings.tescom_plant_id,
-        latitude=settings.tescom_latitude,
-        longitude=settings.tescom_longitude,
-        dc_capacity_kwp=settings.tescom_dc_capacity_kwp or None,
-        ac_capacity_kw=settings.tescom_dc_capacity_kwp or None,
-    )
-    session.add(plant)
-    logger.info("created Tescom plant %s", settings.tescom_plant_id)
+    # Not: Tescom tesisleri artık adaptör tarafından dinamik keşfedilir
+    # (upsert_discovered_plants); her `fabrika_id` ayrı bir tesis olarak
+    # otomatik oluşturulur. Bu fonksiyon eski tek-tesis kurulumlarındaki
+    # `tescom-izmir` kaydını yerinde bırakır — çünkü Influx'ta hâlâ o
+    # plant_id ile geçmiş veri olabilir.
+    return
 
 
 async def _seed_mock_plant(session: AsyncSession, admin: User) -> None:

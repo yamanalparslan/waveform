@@ -27,7 +27,15 @@ from luminmind.core.schemas import TelemetryPoint
 logger = logging.getLogger(__name__)
 
 # Uyarı kural sabitleri — konfigüre edilebilir (config.py'ye taşınabilir)
-STALE_AFTER = timedelta(minutes=30)
+STALE_AFTER = timedelta(minutes=30)  # bu eşiği aşan cihaz "çevrimdışı" olur
+
+
+def fresh_window(interval_minutes: int) -> timedelta:
+    """Cihaz cache değerinin (anlık güç, günlük üretim) UI'da "canlı" sayılacağı
+    süre. Bir polling atlanabilir toleransı için 2×interval, STALE_AFTER ile
+    kapaklı — böylece 5 dk pollingde son 10 dk içinde güncellenen değer canlı,
+    5 dk pollingde 15 dkdır kayıp olanınki eski sayılır."""
+    return min(timedelta(minutes=interval_minutes * 2), STALE_AFTER)
 OVERHEAT_C = 65.0
 CRITICAL_OVERHEAT_C = 75.0
 HEALTHY_STATUSES = frozenset({"AKTIF", "AKTİF", "ACTIVE", "OK", "NORMAL", "RUN", ""})
@@ -53,6 +61,7 @@ class InverterSnapshot:
     ts: datetime
     power_kw: float | None
     temp_c: float | None
+    energy_daily_kwh: float | None
     error_code: str | None
     status: str | None
 
@@ -72,6 +81,7 @@ def latest_snapshots(points: Sequence[TelemetryPoint]) -> dict[tuple[str, str], 
                 ts=p.ts,
                 power_kw=p.ac_power_kw,
                 temp_c=p.temp_c,
+                energy_daily_kwh=p.energy_daily_kwh,
                 error_code=p.error_code,
                 status=p.status,
             )
@@ -109,6 +119,7 @@ async def upsert_inverter_state(
         inverter.last_seen_at = snap.ts
         inverter.last_power_kw = snap.power_kw
         inverter.last_temp_c = snap.temp_c
+        inverter.last_energy_daily_kwh = snap.energy_daily_kwh
         inverter.last_error_code = snap.error_code
         inverter.last_status = snap.status
         updated += 1

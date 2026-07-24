@@ -79,24 +79,25 @@ def _parse_tescom_ts(value: str, tz: tzinfo) -> datetime | None:
 
 
 def normalize_tescom_devices(
-    vendor_plant_id: str, payload: list[dict[str, Any]], tz: tzinfo
+    vendor_plant_id: str,
+    payload: list[dict[str, Any]],
+    tz: tzinfo,
+    fabrika_filter: str | None = None,
 ) -> list[TelemetryPoint]:
     """Tescom `/api/v1/devices` yanıtını kanonik modele dönüştürür.
 
-    Beklenen yapı (cihaz listesi)::
-
-        [{"slave_id": 1, "zaman": "2026-07-21 10:39:27.661885",
-          "guc": 124.73,      # AC güç, kW
-          "voltaj": 801.9,    # DC gerilim, V
-          "akim": 90.33,      # DC akım, A
-          "sicaklik": 52.6,   # °C
-          "hata_kodu": 0, "durum": "AKTIF"}]
+    API her cihazı `fabrika_id` (ör. "mekanik", "uretim") + `slave_id`
+    ile ayırır; aynı slave_id farklı fabrikalarda olabilir. `fabrika_filter`
+    verilirse yalnızca o fabrikanın cihazları alınır (LuminMind'da her
+    fabrika ayrı bir tesis).
 
     Zaman damgası tz'siz yerel (fabrika saati) gelir; `tz` ile işaretlenip
     `TelemetryPoint` içinde UTC'ye çevrilir.
     """
     points: list[TelemetryPoint] = []
     for item in payload:
+        if fabrika_filter is not None and item.get("fabrika_id") != fabrika_filter:
+            continue
         raw_ts = item.get("zaman") or item.get("son_zaman")
         if not isinstance(raw_ts, str):
             continue
@@ -114,11 +115,17 @@ def normalize_tescom_devices(
                 dc_voltage_v=_as_float(item.get("voltaj")),
                 dc_current_a=_as_float(item.get("akim")),
                 temp_c=_as_float(item.get("sicaklik")),
+                energy_daily_kwh=_as_float(item.get("gunluk_uretim_kwh")),
                 error_code=str(error_code) if error_code is not None else None,
                 status=item.get("durum") if isinstance(item.get("durum"), str) else None,
             )
         )
     return points
+
+
+def tescom_fabrika_ids(payload: list[dict[str, Any]]) -> list[str]:
+    """Yanıttan benzersiz fabrika kimliklerini alfabetik döndürür."""
+    return sorted({str(item["fabrika_id"]) for item in payload if "fabrika_id" in item})
 
 
 def normalize_sma_measurements(

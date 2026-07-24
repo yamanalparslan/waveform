@@ -10,6 +10,11 @@ from datetime import datetime
 
 from luminmind.core.aggregate import RawSample
 
+# Grafik ve karşılaştırma çözünürlüğü — Tescom cihazları saniye sınırında
+# damga gönderiyor ve fabrikalar arası zamanlar birbirine oturmuyor; 5 dk
+# bucket'a yuvarlayınca tüm cihazlar aynı bucket'ta toplanır.
+_BUCKET_S = 300  # 5 dk
+
 
 @dataclass(frozen=True)
 class DeviationSample:
@@ -23,13 +28,33 @@ class DeviationSample:
         return (self.actual_kw - self.expected_kw) / self.expected_kw * 100.0
 
 
+def _bucket(ts: datetime) -> datetime:
+    """Damgayı 5 dk bucket sınırına yuvarlar (floor)."""
+    epoch = int(ts.timestamp())
+    aligned = epoch - (epoch % _BUCKET_S)
+    return datetime.fromtimestamp(aligned, tz=ts.tzinfo)
+
+
 def plant_actual_from_samples(samples: list[RawSample]) -> dict[str, dict[datetime, float]]:
-    """Cihaz bazlı ham örneklerden tesis toplamı AC güç serisi üretir."""
-    totals: dict[str, dict[datetime, float]] = defaultdict(lambda: defaultdict(float))
+    """Cihaz bazlı ham örneklerden tesis toplamı AC güç serisi üretir.
+
+    Damgalar 5 dk bucket'a yuvarlanır; her cihazın bucket içindeki değerlerinin
+    ortalaması alınır (ölçüm sıklığı cihazlar arasında değişebilir), sonra
+    bucket bazında cihazlar toplanır. Böylece tesis eğrisi düzgün "toplam AC
+    güç" olur, cihaz başına zigzag/spike üretmez.
+    """
+    # (plant, bucket, inverter) -> [values]
+    buckets: dict[tuple[str, datetime, str], list[float]] = defaultdict(list)
     for sample in samples:
-        if "ac_power_kw" in sample.fields:
-            totals[sample.plant_id][sample.ts] += sample.fields["ac_power_kw"]
-    return {plant: dict(series) for plant, series in totals.items()}
+        v = sample.fields.get("ac_power_kw")
+        if v is None:
+            continue
+        buckets[(sample.plant_id, _bucket(sample.ts), sample.inverter_id)].append(v)
+    # Cihaz başına ortalama, sonra bucket'ta topla
+    per_bucket: dict[str, dict[datetime, float]] = defaultdict(lambda: defaultdict(float))
+    for (plant_id, bucket, _inv), values in buckets.items():
+        per_bucket[plant_id][bucket] += sum(values) / len(values)
+    return {plant: dict(series) for plant, series in per_bucket.items()}
 
 
 def build_deviation_series(

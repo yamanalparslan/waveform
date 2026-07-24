@@ -14,6 +14,7 @@ from luminmind.analytics.inverter_health import (
     STALE_AFTER,
     apply_findings,
     evaluate_inverter,
+    fresh_window,
     latest_snapshots,
     upsert_inverter_state,
 )
@@ -200,3 +201,11 @@ def _make_offline_finding():
         started_at=NOW - timedelta(hours=1),
         evidence={"device_id": "1", "minutes_since_last": 60.0},
     )
+
+
+def test_fresh_window_scales_with_polling_interval():
+    """5 dk polling -> 10 dk canlılık penceresi (2x); büyük intervaller
+    STALE_AFTER ile kapaklanır."""
+    assert fresh_window(5) == timedelta(minutes=10)
+    assert fresh_window(15) == STALE_AFTER  # 30 dk = STALE_AFTER
+    assert fresh_window(60) == STALE_AFTER  # 120 dk yerine STALE_AFTER

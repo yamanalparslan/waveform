@@ -6,21 +6,71 @@
 <h1>Arbitraj Planı</h1>
 <p class="sub">{{ plant.name }} · EPİAŞ GÖP fiyatları üzerinden şarj/deşarj zamanlaması</p>
 
+{% if notice == 'ok' %}
+<div class="info" style="border-color:var(--teal); color:var(--teal)">
+  Plan üretildi.</div>
+{% elif notice == 'failed' %}
+<div class="info" style="border-color:var(--coral); color:var(--coral)">
+  Plan üretimi başarısız — worker loglarına bakın.</div>
+{% elif notice == 'no-battery' %}
+<div class="info" style="border-color:var(--amber); color:var(--amber)">
+  Bu tesise tanımlı batarya yok — arbitraj için önce BESS eklemelisiniz.</div>
+{% endif %}
+
 <div class="toolbar">
   <form method="get" class="row-inline">
     <label for="date" style="margin:0; text-transform:none">Gün</label>
     <input id="date" type="date" name="date" value="{{ day_str }}">
     <button class="primary">Göster</button>
   </form>
-  {% if plan %}
+  {% if user.role == 'admin' and has_batteries %}
+  <form method="post" action="/ui/plants/{{ plant.id }}/arbitrage/run" class="row-inline"
+        style="margin-left:12px">
+    <input type="hidden" name="date" value="{{ day_str }}">
+    <button type="submit" title="Bu gün için planı hemen üret">
+      ⟳ Şimdi plan üret
+    </button>
+  </form>
+  {% endif %}
+  {% if plan or has_pv_forecast %}
   <div style="margin-left:auto; text-align:right">
     <div style="font-size:11.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-faint)">
-      Beklenen günlük gelir</div>
+      Toplam tahmini gelir</div>
     <div class="num" style="font-size:26px; font-weight:700; color:var(--teal)">
-      {{ "%.2f"|format(plan.expected_revenue_try) }} TL</div>
+      {{ "%.0f"|format(combined_revenue) }} TL</div>
+    <div style="font-size:11px; color:var(--text-faint); margin-top:2px">
+      PV satışı {{ pv_revenue }}
+      {% if plan %}+ arbitraj {{ "%.0f"|format(arbitrage_revenue) }}{% endif %} TL
+    </div>
   </div>
   {% endif %}
 </div>
+
+{% if has_pv_forecast %}
+<h2>PV üretim tahmini · {{ day_str }}</h2>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+  <div class="kpi accent-blue">
+    <div class="label">Tahmini üretim</div>
+    <div class="value">{{ pv_energy }}<small>kWh</small></div>
+    <div class="trend">dijital ikiz · hava tahmini</div>
+  </div>
+  <div class="kpi accent-teal">
+    <div class="label">PV satış geliri</div>
+    <div class="value">{{ pv_revenue }}<small>TL</small></div>
+    <div class="trend">üretim × GÖP fiyatı</div>
+  </div>
+  {% if plan %}
+  <div class="kpi accent-amber">
+    <div class="label">Arbitraj katkısı</div>
+    <div class="value">{{ "%.0f"|format(arbitrage_revenue) }}<small>TL</small></div>
+    <div class="trend">batarya al-sat</div>
+  </div>
+  {% endif %}
+</div>
+<div class="chart-wrap">{{ pv_chart | safe }}</div>
+<p class="note">Gün-öncesi PV tahmini + depolama planı + piyasa fiyatı tek yerde:
+üretimi doğrudan satış geliriyle, bataryayı arbitraj geliriyle değerlendirir.</p>
+{% endif %}
 
 {% if plan %}
 <h2>Fiyat eğrisi + eylem şeridi</h2>
@@ -44,9 +94,22 @@
   {% endfor %}
 </table>
 </div>
-{% else %}
+{% elif has_batteries %}
 <div class="info">Bu gün için kayıtlı plan yok. Planlar her gün 12:00 UTC'de (15:00 TRT)
-ertesi gün için otomatik üretilir; worker üzerinden elle de tetikleyebilirsiniz.</div>
+ertesi gün için otomatik üretilir.
+{% if user.role == 'admin' %}Yukarıdaki <b>Şimdi plan üret</b> düğmesini kullanabilirsiniz.
+{% endif %}</div>
+{% elif is_parent_view %}
+<div class="info">
+  Bu üst tesise veya alt fabrikalarına tanımlı BESS yok. Sol menüden
+  <b>alt fabrikalara</b> (ör. Mekanik / Uretim) girip <b>+ Yeni BESS ekle</b>
+  formuyla batarya ekleyebilirsin. Ekledikten sonra arbitraj planı buradan
+  toplu olarak (parent + tüm alt tesisler) görünür.
+</div>
+{% else %}
+<div class="info">Bu tesise tanımlı batarya yok. Arbitraj planlaması için tesis
+tanımına bir BESS eklemelisiniz — sayfanın alt kısmındaki <b>+ Yeni BESS ekle</b>
+formundan.</div>
 {% endif %}
 <p class="note">LP optimizasyonu SoC sınırları, C-rate, gün sonu enerji restorasyonu ve
 günlük çevrim limitini gözetir.</p>

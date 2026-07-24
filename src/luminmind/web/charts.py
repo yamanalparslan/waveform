@@ -5,8 +5,9 @@ Harici JS grafik kütüphanesi yerine saf Python: bağımlılık yok, çevrimdı
 (UI'da TRT) etiketlenir.
 """
 
+import math
 from dataclasses import dataclass
-from datetime import datetime, tzinfo
+from datetime import datetime, timedelta, tzinfo
 from html import escape
 
 _WIDTH = 900
@@ -39,6 +40,79 @@ def _scale(
         return (range_min + range_max) / 2
     ratio = (value - domain_min) / (domain_max - domain_min)
     return range_min + ratio * (range_max - range_min)
+
+
+def _nice_num(x: float, round_result: bool) -> float:
+    """Klasik "nice numbers" algoritması — 1/2/2.5/5/10 katlarına yuvarlar."""
+    if x <= 0:
+        return 1.0
+    exp = math.floor(math.log10(x))
+    f = x / 10 ** exp
+    if round_result:
+        nice_f = 1 if f < 1.5 else 2 if f < 3 else 5 if f < 7 else 10
+    else:
+        nice_f = 1 if f <= 1 else 2 if f <= 2 else 5 if f <= 5 else 10
+    return float(nice_f * 10 ** exp)
+
+
+def _nice_ticks(v_max: float, target: int = 5) -> tuple[float, list[float]]:
+    """0..v_max aralığı için nice tick değerleri döndürür; ölçek üstünü de büyütür."""
+    if v_max <= 0:
+        return 1.0, [0.0, 0.25, 0.5, 0.75, 1.0]
+    span = _nice_num(v_max, False)
+    step = _nice_num(span / max(target - 1, 1), True)
+    nice_max = math.ceil(v_max / step) * step
+    ticks: list[float] = []
+    v = 0.0
+    while v <= nice_max + 1e-9:
+        ticks.append(round(v, 10))
+        v += step
+    return nice_max, ticks
+
+
+def _fmt_axis(value: float, step: float) -> str:
+    """Tick etiketini adım büyüklüğüne göre uygun ondalıkla biçimler."""
+    if step >= 100:
+        return f"{value:,.0f}".replace(",", ".")
+    if step >= 10:
+        return f"{value:,.0f}".replace(",", ".")
+    if step >= 1:
+        # 1..10 arası: gerekiyorsa bir ondalık
+        return f"{value:.1f}" if value != int(value) else f"{int(value)}"
+    if step >= 0.1:
+        return f"{value:.1f}"
+    return f"{value:.2f}"
+
+
+def _hour_ticks(
+    t_min: float, t_max: float, zone: tzinfo, target: int = 6
+) -> list[float]:
+    """X ekseni için tam-saat sınırlarına oturan zaman damgaları."""
+    if t_max <= t_min:
+        return [t_min]
+    span_h = (t_max - t_min) / 3600.0
+    for step_h in (1, 2, 3, 4, 6, 12, 24):
+        if span_h / step_h <= target:
+            break
+    else:
+        step_h = 24
+    start_dt = datetime.fromtimestamp(t_min, tz=zone).replace(
+        minute=0, second=0, microsecond=0
+    )
+    if start_dt.timestamp() < t_min:
+        start_dt += timedelta(hours=1)
+    # step_h'a göre saat sınırına hizala (00, 02, 04... gibi)
+    align = start_dt.hour % step_h
+    if align:
+        start_dt += timedelta(hours=step_h - align)
+    ticks: list[float] = []
+    cur = start_dt
+    while cur.timestamp() <= t_max + 1e-6:
+        ticks.append(cur.timestamp())
+        cur += timedelta(hours=step_h)
+    if not ticks:
+        ticks = [t_min, t_max]
+    return ticks
 
 
 def sparkline(
@@ -87,22 +161,110 @@ def sparkline(
     )
 
 
-def line_chart(
-    series: list[Series],
+def waterfall_chart(
+    stages: list[tuple[str, float, str]],
+    unit: str = "kWh",
+    width: int = _WIDTH,
+    height: int = 260,
+) -> str:
+    """Kayıp şelalesi — teorikten gerçeğe azalan kademeler.
+
+    `stages`: (etiket, kümülatif_kwh, kind) listesi. kind ∈
+    {"base", "loss", "final"}: taban ve gerçek dolu sütun; ara kayıplar önceki
+    tepe ile bu kümülatif arasında "asılı" mercan bloklar.
+    """
+    if not stages:
+        return _empty(width, height, "Veri yok")
+    base = stages[0][1]
+    if base <= 0:
+        return _empty(width, height, "Veri yetersiz")
+
+    x0, x1 = _PAD_LEFT, width - _PAD_RIGHT
+    y0, y1 = height - 54, _PAD_TOP  # alt boşluk etiketler için geniş
+    v_max, y_ticks = _nice_ticks(base, target=5)
+    step = y_ticks[1] - y_ticks[0] if len(y_ticks) >= 2 else 1.0
+
+    parts: list[str] = [f'<svg viewBox="0 0 {width} {height}" class="chart" role="img">']
+    for value in y_ticks:
+        y = _scale(value, 0.0, v_max, y0, y1)
+        parts.append(
+            f'<line x1="{x0}" y1="{y:.1f}" x2="{x1}" y2="{y:.1f}" class="grid"/>'
+            f'<text x="{x0 - 8}" y="{y + 4:.1f}" text-anchor="end" class="tick">'
+            f"{escape(_fmt_axis(value, step))}</text>"
+        )
+    parts.append(f'<text x="14" y="{_PAD_TOP + 10}" class="tick unit">{escape(unit)}</text>')
+
+    n = len(stages)
+    slot_w = (x1 - x0) / n
+    bar_w = slot_w * 0.6
+    loss_color = "#e2725b"   # kayıp — mercan
+    full_color = "#f2b544"   # taban/gerçek — kehribar
+    prev_top = base
+    for i, (label, cum, kind) in enumerate(stages):
+        cx = x0 + slot_w * (i + 0.5)
+        bx = cx - bar_w / 2
+        if kind in ("base", "final"):
+            top = _scale(cum, 0.0, v_max, y0, y1)
+            parts.append(
+                f'<rect x="{bx:.1f}" y="{top:.1f}" width="{bar_w:.1f}" '
+                f'height="{max(1.0, y0 - top):.1f}" rx="3" fill="{full_color}" class="bar">'
+                f"<title>{escape(_fmt_axis(cum, step))} {escape(unit)}</title></rect>"
+            )
+            val_txt = _fmt_axis(cum, step)
+            if kind == "base":
+                prev_top = cum
+        else:  # loss — asılı blok: önceki tepe → bu kümülatif
+            loss = prev_top - cum
+            y_top = _scale(prev_top, 0.0, v_max, y0, y1)
+            y_bot = _scale(cum, 0.0, v_max, y0, y1)
+            parts.append(
+                f'<rect x="{bx:.1f}" y="{y_top:.1f}" width="{bar_w:.1f}" '
+                f'height="{max(1.0, y_bot - y_top):.1f}" rx="3" fill="{loss_color}" '
+                f'class="bar" opacity="0.9"><title>−{escape(_fmt_axis(loss, step))} '
+                f"{escape(unit)}</title></rect>"
+            )
+            parts.append(
+                f'<line x1="{x0 + slot_w * i + bar_w / 2 + 2:.1f}" y1="{y_top:.1f}" '
+                f'x2="{bx:.1f}" y2="{y_top:.1f}" stroke="{loss_color}" '
+                f'stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>'
+            )
+            val_txt = f"−{_fmt_axis(loss, step)}"
+            prev_top = cum
+        parts.append(
+            f'<text x="{cx:.1f}" y="{height - 30}" text-anchor="middle" class="tick" '
+            f'style="font-size:10px">{escape(_wrap_label(label))}</text>'
+            f'<text x="{cx:.1f}" y="{height - 12}" text-anchor="middle" class="tick" '
+            f'style="font-weight:700">{escape(val_txt)}</text>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _wrap_label(label: str, limit: int = 16) -> str:
+    """Uzun etiketi ilk kelime öbeğiyle kısaltır (tek satır SVG için)."""
+    return label if len(label) <= limit else label[: limit - 1] + "…"
+
+
+def daily_bar_chart(
+    points: list[tuple[datetime, float]],
     zone: tzinfo,
-    unit: str = "kW",
+    unit: str = "kWh",
+    color: str = "#f2b544",
     width: int = _WIDTH,
     height: int = _HEIGHT,
 ) -> str:
-    """Çok serili çizgi grafik; y ekseni 0'dan başlar, x ekseni saat etiketli."""
-    all_points = [p for s in series for p in s.points]
-    if not all_points:
-        return _empty(width, height, "Veri yok")
+    """Günlük toplam için dikey bar grafiği (gün başına bir bar).
 
-    t_min = min(ts for ts, _ in all_points).timestamp()
-    t_max = max(ts for ts, _ in all_points).timestamp()
-    v_max = max((v for _, v in all_points), default=0.0)
-    v_max = v_max * 1.08 if v_max > 0 else 1.0
+    Günlük üretim ayrık bir büyüklük — çizgi yerine bar dürüst gösterimdir.
+    X ekseni tarih etiketli (gg.aa); çok gün varsa etiketler seyreltilir.
+    Her barın <title>'ı tam değeri taşır (tarayıcı tooltip'i).
+    """
+    if not points:
+        return _empty(width, height, "Veri yok")
+    pts = sorted(points)
+    raw_max = max(v for _, v in pts)
+    v_max, y_ticks = _nice_ticks(raw_max, target=5)
+    step = y_ticks[1] - y_ticks[0] if len(y_ticks) >= 2 else 1.0
 
     x0, x1 = _PAD_LEFT, width - _PAD_RIGHT
     y0, y1 = height - _PAD_BOTTOM, _PAD_TOP
@@ -110,21 +272,91 @@ def line_chart(
     parts: list[str] = [
         f'<svg viewBox="0 0 {width} {height}" class="chart" role="img">',
     ]
-    # y ekseni ızgarası + etiketleri
-    for i in range(5):
-        value = v_max * i / 4
+    # y ekseni ızgarası + etiketleri (nice-tick)
+    for value in y_ticks:
         y = _scale(value, 0.0, v_max, y0, y1)
         parts.append(
             f'<line x1="{x0}" y1="{y:.1f}" x2="{x1}" y2="{y:.1f}" class="grid"/>'
             f'<text x="{x0 - 8}" y="{y + 4:.1f}" text-anchor="end" class="tick">'
-            f"{value:,.0f}</text>"
+            f"{escape(_fmt_axis(value, step))}</text>"
         )
     parts.append(
         f'<text x="14" y="{_PAD_TOP + 10}" class="tick unit">{escape(unit)}</text>'
     )
-    # x ekseni saat etiketleri (6 dilim)
-    for i in range(7):
-        t = t_min + (t_max - t_min) * i / 6
+
+    # bar yerleşimi — eşit aralıklı slotlar, slotun %64'ü bar
+    n = len(pts)
+    slot_w = (x1 - x0) / n
+    bar_w = slot_w * 0.64
+    # etiket seyreltme: en çok ~10 etiket
+    label_stride = max(1, math.ceil(n / 10))
+
+    for i, (ts, v) in enumerate(pts):
+        cx = x0 + slot_w * (i + 0.5)
+        bx = cx - bar_w / 2
+        by = _scale(v, 0.0, v_max, y0, y1)
+        bh = max(0.0, y0 - by)
+        parts.append(
+            f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bar_w:.1f}" height="{bh:.1f}" '
+            f'rx="3" fill="{color}" class="bar">'
+            f"<title>{escape(_fmt_axis(v, step))} {escape(unit)}</title></rect>"
+        )
+        if i % label_stride == 0 or i == n - 1:
+            label = datetime.fromtimestamp(ts.timestamp(), tz=zone).strftime("%d.%m")
+            parts.append(
+                f'<text x="{cx:.1f}" y="{height - 12}" text-anchor="middle" '
+                f'class="tick">{label}</text>'
+            )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def line_chart(
+    series: list[Series],
+    zone: tzinfo,
+    unit: str = "kW",
+    width: int = _WIDTH,
+    height: int = _HEIGHT,
+) -> str:
+    """Çok serili çizgi grafik.
+
+    - Y ekseni her zaman 0'dan başlar; üst sınır "nice number"a yuvarlanır.
+    - Y tick etiketleri veri aralığına göre 0/1/2 ondalık gösterir.
+    - X ekseni tam saat (veya 2/3/6/12 saat) sınırlarına oturur — "05:27"
+      yerine "05:00, 06:00, 07:00" gibi okunabilir işaretler.
+    - Az veri (≤12 nokta) olduğunda her ölçüme marker konur; tek nokta da
+      görünür kalır. Ayrıca her serinin maksimumuna yakın bir tepe noktası
+      küçük halka ile vurgulanır.
+    """
+    all_points = [p for s in series for p in s.points]
+    if not all_points:
+        return _empty(width, height, "Veri yok")
+
+    t_min = min(ts for ts, _ in all_points).timestamp()
+    t_max = max(ts for ts, _ in all_points).timestamp()
+    raw_max = max((v for _, v in all_points), default=0.0)
+    v_max, y_ticks = _nice_ticks(raw_max, target=5)
+    step = y_ticks[1] - y_ticks[0] if len(y_ticks) >= 2 else 1.0
+
+    x0, x1 = _PAD_LEFT, width - _PAD_RIGHT
+    y0, y1 = height - _PAD_BOTTOM, _PAD_TOP
+
+    parts: list[str] = [
+        f'<svg viewBox="0 0 {width} {height}" class="chart" role="img">',
+    ]
+    # y ekseni ızgarası + etiketleri (nice-tick)
+    for value in y_ticks:
+        y = _scale(value, 0.0, v_max, y0, y1)
+        parts.append(
+            f'<line x1="{x0}" y1="{y:.1f}" x2="{x1}" y2="{y:.1f}" class="grid"/>'
+            f'<text x="{x0 - 8}" y="{y + 4:.1f}" text-anchor="end" class="tick">'
+            f"{escape(_fmt_axis(value, step))}</text>"
+        )
+    parts.append(
+        f'<text x="14" y="{_PAD_TOP + 10}" class="tick unit">{escape(unit)}</text>'
+    )
+    # x ekseni tam-saat sınırları
+    for t in _hour_ticks(t_min, t_max, zone):
         x = _scale(t, t_min, t_max, x0, x1)
         label = datetime.fromtimestamp(t, tz=zone).strftime("%H:%M")
         parts.append(
@@ -135,15 +367,36 @@ def line_chart(
     for s in series:
         if not s.points:
             continue
-        coords = " ".join(
-            f"{_scale(ts.timestamp(), t_min, t_max, x0, x1):.1f},"
-            f"{_scale(v, 0.0, v_max, y0, y1):.1f}"
-            for ts, v in sorted(s.points)
-        )
-        parts.append(
-            f'<polyline points="{coords}" fill="none" stroke="{s.color}" '
-            f'stroke-width="2"/>'
-        )
+        sorted_pts = sorted(s.points)
+        pts_scaled = [
+            (
+                _scale(ts.timestamp(), t_min, t_max, x0, x1) if t_max > t_min
+                else (x0 + x1) / 2,
+                _scale(v, 0.0, v_max, y0, y1),
+            )
+            for ts, v in sorted_pts
+        ]
+        if len(pts_scaled) >= 2:
+            coords = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts_scaled)
+            parts.append(
+                f'<polyline points="{coords}" fill="none" stroke="{s.color}" '
+                f'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
+            )
+        # az nokta okunaksız — her noktaya marker koy (tek nokta da görünsün)
+        if len(pts_scaled) <= 12:
+            for x, y in pts_scaled:
+                parts.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{s.color}"/>'
+                )
+        # tepe noktasını halka ile vurgula (yeterli veri ve gerçek bir tepe varsa)
+        elif len(pts_scaled) >= 6:
+            peak_idx = max(range(len(sorted_pts)), key=lambda i: sorted_pts[i][1])
+            if sorted_pts[peak_idx][1] > 0:
+                px, py = pts_scaled[peak_idx]
+                parts.append(
+                    f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="none" '
+                    f'stroke="{s.color}" stroke-width="1.5"/>'
+                )
     # gösterge (legend)
     legend_x = x0
     for s in series:
