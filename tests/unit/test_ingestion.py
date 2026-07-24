@@ -60,3 +60,82 @@ async def test_run_ingestion_writes_to_injected_sink():
     total = await run_ingestion(settings, sink=sink)
     assert total == len(sink.points)
     assert all(p.vendor_plant_id == "mock-plant-1" for p in sink.points)
+
+
+async def test_ingest_adapter_isolates_plant_discovery_failure():
+    """fetch_plants patlarsa (ör. 401) tur çökmesin — boş dönsün."""
+    from luminmind.adapters.base import AdapterError
+    from luminmind.core.schemas import Vendor
+    from luminmind.workers.tasks.ingestion import ingest_adapter
+
+    class FailingAdapter:
+        vendor = Vendor.TESCOM
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def fetch_plants(self):
+            raise AdapterError("401 unauthorized")
+
+    from datetime import UTC, datetime
+
+    points, plants = await ingest_adapter(FailingAdapter(), since=datetime.now(tz=UTC))
+    assert points == []
+    assert plants == []
+
+
+async def test_ingest_to_continues_when_one_adapter_fails():
+    """Bir adaptör patlasa da sink'e yazım akışı çökmesin (izolasyon)."""
+    from datetime import UTC, datetime
+
+    from luminmind.core.schemas import TelemetryPoint, Vendor
+    from luminmind.workers.tasks.ingestion import _ingest_to
+
+    class BoomAdapter:
+        vendor = Vendor.HUAWEI
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def fetch_plants(self):
+            raise RuntimeError("boom")
+
+    good_point = TelemetryPoint(
+        vendor=Vendor.MOCK, vendor_plant_id="p", vendor_device_id="1",
+        ts=datetime.now(tz=UTC), ac_power_kw=10.0,
+    )
+
+    class GoodAdapter:
+        vendor = Vendor.MOCK
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def fetch_plants(self):
+            from luminmind.core.schemas import PlantMeta
+            return [PlantMeta(vendor=Vendor.MOCK, vendor_plant_id="p", name="P")]
+
+        async def fetch_telemetry(self, vendor_plant_id, since):
+            return [good_point]
+
+    import luminmind.workers.tasks.ingestion as ing
+
+    orig = ing.build_adapters
+    ing.build_adapters = lambda s: [BoomAdapter(), GoodAdapter()]
+    try:
+        sink = CapturingSink()
+        total = await _ingest_to(sink, Settings(lm_use_mock_vendors=True))
+    finally:
+        ing.build_adapters = orig
+    # Patlayan adaptöre rağmen iyi adaptörün noktası yazıldı
+    assert total == 1
+    assert sink.points == [good_point]

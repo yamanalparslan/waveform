@@ -94,7 +94,13 @@ async def ingest_adapter(
     collected: list[TelemetryPoint] = []
     discovered: list[PlantMeta] = []
     async with adapter:
-        plants = await adapter.fetch_plants()
+        try:
+            plants = await adapter.fetch_plants()
+        except Exception:
+            # Tesis keşfi hatası (ör. üretici API'sinden 401/ağ hatası) bu adaptörü
+            # atlar; diğer adaptörler ve zamanlanmış turlar etkilenmez.
+            logger.exception("plant discovery failed vendor=%s", adapter.vendor)
+            return collected, discovered
         discovered.extend(plants)
         for plant in plants:
             try:
@@ -122,7 +128,11 @@ async def _ingest_to(sink: TelemetrySink, settings: Settings) -> int:
     all_points: list[TelemetryPoint] = []
     all_plants: list[PlantMeta] = []
     for adapter in build_adapters(settings):
-        points, plants = await ingest_adapter(adapter, since=since)
+        try:
+            points, plants = await ingest_adapter(adapter, since=since)
+        except Exception:
+            logger.exception("adapter ingest failed vendor=%s", adapter.vendor)
+            continue
         await sink.write_telemetry(points)
         total += len(points)
         all_points.extend(points)

@@ -68,7 +68,16 @@ class TescomAdapter(VendorAdapter):
             backoff_base_s=self._backoff_base_s,
             headers=self._headers,
         )
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError:
+            # 401/hata sayfası gibi JSON olmayan gövde — çökme, boş dön
+            logger.warning(
+                "Tescom /devices non-JSON response (status %s): %s",
+                response.status_code,
+                response.text[:200],
+            )
+            return []
         if not isinstance(payload, list):
             logger.warning("Tescom /devices unexpected payload type: %s", type(payload))
             return []
