@@ -162,16 +162,16 @@ def sparkline(
 
 
 def waterfall_chart(
-    stages: list[tuple[str, float, float]],
+    stages: list[tuple[str, float, str]],
     unit: str = "kWh",
     width: int = _WIDTH,
     height: int = 260,
 ) -> str:
-    """Kayıp şelalesi — teorikten gerçeğe azalan kümülatif bloklar.
+    """Kayıp şelalesi — teorikten gerçeğe azalan kademeler.
 
-    `stages`: (etiket, kümülatif_kwh, kayıp_kwh) listesi; ilk basamak taban
-    (kayıp 0). Her ara basamak, önceki tepe ile kendi tepesi arasında "asılı"
-    bir kayıp bloğu olarak çizilir; ilk ve son basamak dolu sütundur.
+    `stages`: (etiket, kümülatif_kwh, kind) listesi. kind ∈
+    {"base", "loss", "final"}: taban ve gerçek dolu sütun; ara kayıplar önceki
+    tepe ile bu kümülatif arasında "asılı" mercan bloklar.
     """
     if not stages:
         return _empty(width, height, "Veri yok")
@@ -200,45 +200,42 @@ def waterfall_chart(
     loss_color = "#e2725b"   # kayıp — mercan
     full_color = "#f2b544"   # taban/gerçek — kehribar
     prev_top = base
-    for i, (label, cum, loss) in enumerate(stages):
+    for i, (label, cum, kind) in enumerate(stages):
         cx = x0 + slot_w * (i + 0.5)
         bx = cx - bar_w / 2
-        if i == 0 or i == n - 1:
-            # dolu sütun (taban = teorik, son = gerçek)
+        if kind in ("base", "final"):
             top = _scale(cum, 0.0, v_max, y0, y1)
             parts.append(
                 f'<rect x="{bx:.1f}" y="{top:.1f}" width="{bar_w:.1f}" '
-                f'height="{y0 - top:.1f}" rx="3" fill="{full_color}">'
+                f'height="{max(1.0, y0 - top):.1f}" rx="3" fill="{full_color}" class="bar">'
                 f"<title>{escape(_fmt_axis(cum, step))} {escape(unit)}</title></rect>"
             )
-        else:
-            # asılı kayıp bloğu: önceki tepe → bu tepe
+            val_txt = _fmt_axis(cum, step)
+            if kind == "base":
+                prev_top = cum
+        else:  # loss — asılı blok: önceki tepe → bu kümülatif
+            loss = prev_top - cum
             y_top = _scale(prev_top, 0.0, v_max, y0, y1)
             y_bot = _scale(cum, 0.0, v_max, y0, y1)
             parts.append(
                 f'<rect x="{bx:.1f}" y="{y_top:.1f}" width="{bar_w:.1f}" '
                 f'height="{max(1.0, y_bot - y_top):.1f}" rx="3" fill="{loss_color}" '
-                f'opacity="0.85"><title>-{escape(_fmt_axis(loss, step))} {escape(unit)}'
-                f"</title></rect>"
+                f'class="bar" opacity="0.9"><title>−{escape(_fmt_axis(loss, step))} '
+                f"{escape(unit)}</title></rect>"
             )
-            # bağlantı çizgisi
             parts.append(
-                f'<line x1="{cx - slot_w/2 + bar_w/2 + 2:.1f}" y1="{y_top:.1f}" '
-                f'x2="{cx - bar_w/2:.1f}" y2="{y_top:.1f}" stroke="{loss_color}" '
+                f'<line x1="{x0 + slot_w * i + bar_w / 2 + 2:.1f}" y1="{y_top:.1f}" '
+                f'x2="{bx:.1f}" y2="{y_top:.1f}" stroke="{loss_color}" '
                 f'stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>'
             )
-        # etiket (iki satır: ad + değer)
-        val_txt = (
-            f"{_fmt_axis(cum, step)}" if (i == 0 or i == n - 1)
-            else f"−{_fmt_axis(loss, step)}"
-        )
+            val_txt = f"−{_fmt_axis(loss, step)}"
+            prev_top = cum
         parts.append(
             f'<text x="{cx:.1f}" y="{height - 30}" text-anchor="middle" class="tick" '
             f'style="font-size:10px">{escape(_wrap_label(label))}</text>'
             f'<text x="{cx:.1f}" y="{height - 12}" text-anchor="middle" class="tick" '
             f'style="font-weight:700">{escape(val_txt)}</text>'
         )
-        prev_top = cum
     parts.append("</svg>")
     return "".join(parts)
 

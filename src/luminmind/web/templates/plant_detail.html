@@ -83,9 +83,17 @@
 {% if waterfall_chart %}
 <h2>Kayıp şelalesi</h2>
 <div class="chart-wrap">{{ waterfall_chart | safe }}</div>
-<p class="note">Teorik üretimden (POA ışınımı × kapasite) gerçek üretime kadar kayıplar:
-sıcaklık, sistem/dönüşüm (invertör + kablo + trafo) ve saha (gölgelenme, kirlilik,
-duruş). POA verisi yoksa yalnızca beklenen → saha kaybı → gerçek gösterilir.</p>
+<p class="note">
+Panellere düşen güneş enerjisinden (soldaki <b>Teorik</b> sütun) sayaçtaki
+<b>gerçek</b> üretime (sağdaki sütun) kadar enerjinin nerelerde kaybolduğunu
+gösterir. Mercan bloklar kademeli kayıplardır:
+<b>Sıcaklık kaybı</b> — paneller ısındıkça verim düşer;
+<b>Sistem kaybı</b> — invertör dönüşümü, kablo ve trafo kayıpları;
+<b>Saha kaybı</b> — gölgelenme, kirlilik, dizi uyumsuzluğu veya cihaz duruşu gibi
+sahaya özgü kayıplar (bu blok büyükse gerçek bir sorun vardır — temizlik, gölge
+kaynağı ya da arızalı invertör). POA ışınım verisi yoksa yalnızca
+<b>Beklenen → Saha kaybı → Gerçek</b> gösterilir.
+</p>
 {% endif %}
 {% endif %}
 

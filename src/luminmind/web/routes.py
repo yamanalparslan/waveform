@@ -719,9 +719,23 @@ async def plant_detail(
             poa = {ts: sum(vs) / len(vs) for ts, vs in poa_acc.items()}
             cell_temp = {ts: sum(vs) / len(vs) for ts, vs in temp_acc.items()}
 
+        # Kısmi gün (bugün) düzeltmesi: beklenen/POA/sıcaklık, gerçek verinin
+        # bittiği ana kadar kırpılır — yoksa tam-gün teorik, sabahki kısmi
+        # gerçekle kıyaslanınca sahte "saha kaybı" üretir.
+        cutoff = max(actual) if actual else None
+        if cutoff is not None:
+            expected = {ts: v for ts, v in expected.items() if ts <= cutoff}
+            poa = {ts: v for ts, v in poa.items() if ts <= cutoff}
+            cell_temp = {ts: v for ts, v in cell_temp.items() if ts <= cutoff}
+
+        # Görüntülenen gün için elapsed saat (kapasite faktörü paydası)
+        period_h = 24.0
+        if is_today and cutoff is not None:
+            period_h = max(1.0, (cutoff - start).total_seconds() / 3600.0)
+
         kpi = compute_kpis(
             actual, expected, dc_capacity_kwp=dc_kwp or None,
-            ac_capacity_kw=ac_kw or None, period_hours=24.0,
+            ac_capacity_kw=ac_kw or None, period_hours=period_h,
             actual_interval_h=5.0 / 60.0, expected_interval_h=0.25,
             poa=poa or None, cell_temp=cell_temp or None,
         )
@@ -744,7 +758,7 @@ async def plant_detail(
             ),
         }
         waterfall_svg = waterfall_chart(
-            [(s.label, s.kwh, s.loss_kwh) for s in stages], unit="kWh"
+            [(s.label, s.kwh, s.kind) for s in stages], unit="kWh"
         )
 
     # Gün-öncesi üretim tahmini (yarın) + tahmini gelir

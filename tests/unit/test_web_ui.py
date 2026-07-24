@@ -129,7 +129,7 @@ async def test_plant_detail_renders_svg_chart(client, engine):
     assert "Spesifik verim" in response.text
     assert "Sıcaklık-düzeltmeli PR" in response.text
     assert "Kayıp şelalesi" in response.text
-    assert "Teorik (POA)" in response.text
+    assert "Teorik" in response.text and "Gerçek" in response.text
     # Gün-öncesi üretim tahmini bölümü
     assert "Yarının üretim tahmini" in response.text
     assert "Tahmini üretim" in response.text

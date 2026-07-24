@@ -45,12 +45,17 @@ class PerformanceKPIs:
 
 @dataclass(frozen=True)
 class LossStage:
-    """Kayıp şelalesinin tek basamağı."""
+    """Kayıp şelalesinin tek basamağı.
+
+    `kind`: "base" (teorik/beklenen tam sütun), "loss" (asılı kayıp bloğu) veya
+    "final" (gerçek üretim tam sütunu).
+    """
 
     label: str
     kwh: float          # bu basamaktaki kümülatif enerji (teorikten gerçeğe azalan)
     loss_kwh: float     # bir önceki basamaktan bu basamağa düşüş (pozitif = kayıp)
     loss_pct: float     # teorik (ilk basamak) üzerinden yüzde
+    kind: str = "loss"
 
 
 def _ck(cell_temp_c: float, gamma: float) -> float:
@@ -140,7 +145,10 @@ def compute_loss_waterfall(
     actual_kwh = _energy_kwh(actual, actual_interval_h)
     expected_kwh = _energy_kwh(expected, expected_interval_h)
 
-    stages: list[tuple[str, float]] = []  # (label, cumulative kwh)
+    # (etiket, kümülatif kwh, kind) — teorik/beklenen "base", ara kayıplar "loss",
+    # gerçek üretim ayrı bir "final" tam sütun. Kayıp bloğu bir öncekiyle bu
+    # kümülatif arasındaki düşüştür.
+    stages: list[tuple[str, float, str]]
     if poa and dc_capacity_kwp and dc_capacity_kwp > 0:
         theoretical = dc_capacity_kwp * (
             sum(v / G_STC for v in poa.values()) * expected_interval_h
@@ -153,35 +161,34 @@ def compute_loss_waterfall(
                 corr += (g / G_STC) * (_ck(tc, gamma) if tc is not None else 1.0)
             theo_temp = dc_capacity_kwp * corr * expected_interval_h
         stages = [
-            ("Teorik (POA)", theoretical),
-            ("Sıcaklık sonrası", theo_temp),
-            ("Sistem sonrası", expected_kwh),
-            ("Gerçek", actual_kwh),
+            ("Teorik", theoretical, "base"),
+            ("Sıcaklık kaybı", theo_temp, "loss"),
+            ("Sistem kaybı", expected_kwh, "loss"),
+            ("Saha kaybı", actual_kwh, "loss"),
+            ("Gerçek", actual_kwh, "final"),
         ]
     else:
         stages = [
-            ("Beklenen (ikiz)", expected_kwh),
-            ("Gerçek", actual_kwh),
+            ("Beklenen", expected_kwh, "base"),
+            ("Saha kaybı", actual_kwh, "loss"),
+            ("Gerçek", actual_kwh, "final"),
         ]
 
     base = stages[0][1] if stages else 0.0
-    labels_for_loss = {
-        "Sıcaklık sonrası": "Sıcaklık kaybı",
-        "Sistem sonrası": "Sistem/dönüşüm kaybı",
-        "Gerçek": "Saha kaybı (gölge/kirlilik/duruş)",
-    }
     result: list[LossStage] = []
-    prev = None
-    for label, kwh in stages:
-        if prev is None:
-            result.append(LossStage(label=label, kwh=kwh, loss_kwh=0.0, loss_pct=0.0))
-        else:
+    prev = base
+    for label, kwh, kind in stages:
+        if kind == "loss":
             loss = prev - kwh
             result.append(LossStage(
-                label=labels_for_loss.get(label, label),
-                kwh=kwh,
-                loss_kwh=loss,
+                label=label, kwh=kwh, loss_kwh=loss,
                 loss_pct=(loss / base * 100.0) if base > 0 else 0.0,
+                kind=kind,
             ))
-        prev = kwh
+            prev = kwh
+        else:  # base | final
+            result.append(LossStage(label=label, kwh=kwh, loss_kwh=0.0,
+                                    loss_pct=0.0, kind=kind))
+            if kind == "base":
+                prev = kwh
     return result

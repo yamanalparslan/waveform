@@ -87,16 +87,17 @@ def test_loss_waterfall_without_poa_two_stages():
         dc_capacity_kwp=1000.0,
         actual_interval_h=0.25, expected_interval_h=0.25,
     )
-    assert [s.label for s in stages] == [
-        "Beklenen (ikiz)", "Saha kaybı (gölge/kirlilik/duruş)"
-    ]
+    # Beklenen(base) → Saha kaybı(loss) → Gerçek(final)
+    assert [s.label for s in stages] == ["Beklenen", "Saha kaybı", "Gerçek"]
+    assert [s.kind for s in stages] == ["base", "loss", "final"]
     assert stages[0].kwh == 250.0
     assert stages[1].kwh == 200.0
     assert stages[1].loss_kwh == 50.0
     assert stages[1].loss_pct == 20.0  # 50 / 250
+    assert stages[2].kwh == 200.0  # Gerçek final sütunu
 
 
-def test_loss_waterfall_with_poa_four_stages():
+def test_loss_waterfall_with_poa_five_stages():
     actual = _series([700, 700])       # 350 kWh
     expected = _series([850, 850])     # 425 kWh
     poa = _series([1000.0, 1000.0])
@@ -108,14 +109,12 @@ def test_loss_waterfall_with_poa_four_stages():
         poa=poa, cell_temp=cell,
     )
     assert [s.label for s in stages] == [
-        "Teorik (POA)",
-        "Sıcaklık kaybı",
-        "Sistem/dönüşüm kaybı",
-        "Saha kaybı (gölge/kirlilik/duruş)",
+        "Teorik", "Sıcaklık kaybı", "Sistem kaybı", "Saha kaybı", "Gerçek",
     ]
+    assert [s.kind for s in stages] == ["base", "loss", "loss", "loss", "final"]
     # Teorik = 1000 kWp × 0.5 h = 500 kWh
     assert stages[0].kwh == 500.0
-    # Kümülatif azalan
+    # Kümülatif azalan (final = son loss ile aynı = gerçek)
     assert stages[0].kwh > stages[1].kwh > stages[2].kwh >= stages[3].kwh
-    # Son basamak gerçek
-    assert round(stages[-1].kwh, 1) == 350.0
+    assert round(stages[-1].kwh, 1) == 350.0  # Gerçek final
+    assert stages[-1].kind == "final"
