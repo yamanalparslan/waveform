@@ -136,6 +136,34 @@ async def test_plant_detail_renders_svg_chart(client, engine):
     assert "Tahmini gelir" in response.text
 
 
+async def test_plant_detail_past_day_ignores_device_daily_cache(client, engine):
+    """Geçmiş gün görüntülenirken cihazın gün-toplam sayacı (bugünkü, sıfırlanan)
+    kullanılmamalı — o gün için Influx ölçümünden hesaplanan enerji gösterilmeli."""
+    await do_login(client)
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        # Taze ama BUGÜNÜN sayacını taşıyan bir invertör ekle
+        session.add(Inverter(
+            plant_id=plant.id, vendor_device_id="cache-test",
+            model="Cache Inv", ac_capacity_kw=250.0,
+            last_seen_at=datetime.now(tz=UTC),
+            last_power_kw=100.0, last_energy_daily_kwh=35.0,
+            last_status="AKTIF", last_error_code="0",
+        ))
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+
+    yesterday = (datetime.now(tz=UTC) - timedelta(days=1)).date()
+    response = await client.get(f"/ui/plants/{plant.id}?date={yesterday.isoformat()}")
+    assert response.status_code == 200
+    # Geçmiş günde "cihaz verisi" değil "ölçüm toplamı" etiketi görünmeli
+    assert "ölçüm toplamı" in response.text
+    # Bugün görüntülenince cihaz verisi kullanılır
+    today = datetime.now(tz=UTC).date()
+    resp_today = await client.get(f"/ui/plants/{plant.id}?date={today.isoformat()}")
+    assert "cihaz verisi" in resp_today.text
+
+
 async def test_anomalies_page_and_status_action(client, engine):
     await do_login(client)
     async with session_scope(engine) as session:

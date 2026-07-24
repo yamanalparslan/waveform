@@ -617,9 +617,11 @@ async def plant_detail(
         inverters,
         plant_label_by_id if is_parent else None,
     )
-    # Cihaz cache'i polling penceresi (2 × ingestion_interval) içindeyse
-    # günlük üretim toplamına dahil et.
+    # Cihaz gün-toplam sayacı (last_energy_daily_kwh) yalnızca BUGÜN görüntülenirken
+    # geçerlidir — gece yarısı sıfırlanan anlık bir değerdir, geçmiş günü temsil etmez.
+    # Geçmiş günlerde Influx'tan hesaplanan enerji (energy_kwh) kullanılır.
     from luminmind.analytics.inverter_health import fresh_window
+    is_today = day == datetime.now(tz=TRT).date()
     _fw = fresh_window(settings.ingestion_interval_minutes)
     now_utc = datetime.now(tz=UTC)
     fresh_inverters = [
@@ -629,7 +631,8 @@ async def plant_detail(
         and inv.last_energy_daily_kwh is not None
     ]
     daily_sum = sum((inv.last_energy_daily_kwh or 0.0) for inv in fresh_inverters)
-    if daily_sum > 0:
+    use_device_daily = is_today and daily_sum > 0
+    if use_device_daily:
         ui_energy_kwh = daily_sum
 
     if expected_kwh > 1.0:
@@ -637,7 +640,7 @@ async def plant_detail(
     kpis = {
         "peak_kw": _fmt_int(peak_kw) if peak_kw else "—",
         "energy_kwh": _fmt_int(ui_energy_kwh) if ui_energy_kwh else "—",
-        "energy_trend": "cihaz verisi" if daily_sum > 0 else "15 dk toplamı",
+        "energy_trend": "cihaz verisi" if use_device_daily else "ölçüm toplamı",
         "expected_kwh": _fmt_int(expected_kwh) if expected_kwh else "—",
         "pr": _fmt_1(pr) if pr else "—",
         "pr_ok": pr >= 85.0,
@@ -897,15 +900,18 @@ async def inverter_detail(
     from luminmind.analytics.inverter_health import fresh_window
     settings: Settings = request.app.state.settings
     _fw = fresh_window(settings.ingestion_interval_minutes)
+    # Cihaz gün-toplam sayacı yalnızca bugün geçerli (gece sıfırlanır);
+    # geçmiş günlerde Influx serisinden hesaplanan enerji kullanılır.
+    _is_today = day == datetime.now(tz=TRT).date()
     _fresh = (
         inverter.last_seen_at is not None
         and (datetime.now(tz=UTC) - _as_utc(inverter.last_seen_at)) <= _fw  # type: ignore[operator]
     )
-    if _fresh and inverter.last_energy_daily_kwh is not None:
+    if _is_today and _fresh and inverter.last_energy_daily_kwh is not None:
         energy_kwh = inverter.last_energy_daily_kwh
         energy_source = "cihaz verisi"
     else:
-        energy_source = "15 dk toplamı"
+        energy_source = "ölçüm toplamı"
 
     # Sağlık rozeti — plant_detail'daki mantıkla aynı, tek satır için
     rows = _build_inverter_rows([inverter])
