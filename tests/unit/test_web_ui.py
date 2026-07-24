@@ -175,9 +175,12 @@ async def test_arbitrage_page_shows_plan_and_revenue(client, engine):
         f"/ui/plants/{plant.id}/arbitrage?date={plan_day.isoformat()}"
     )
     assert response.status_code == 200
-    assert "Beklenen günlük gelir" in response.text
+    assert "Toplam tahmini gelir" in response.text
     assert "Şarj" in response.text and "Deşarj" in response.text
     assert "<svg" in response.text
+    # PV tahmini + depolama + piyasa tek yerde (DeepSolar Predict)
+    assert "PV üretim tahmini" in response.text
+    assert "PV satış geliri" in response.text
 
 
 async def test_arbitrage_page_defaults_to_latest_plan_when_no_date(client, engine):
@@ -192,7 +195,7 @@ async def test_arbitrage_page_defaults_to_latest_plan_when_no_date(client, engin
     assert response.status_code == 200
     # date input değerinin en yeni plana geldiğini teyit et
     assert f'value="{plan_day.isoformat()}"' in response.text
-    assert "Beklenen günlük gelir" in response.text
+    assert "Toplam tahmini gelir" in response.text
 
 
 async def test_arbitrage_run_button_generates_plan(client, engine):
@@ -211,7 +214,7 @@ async def test_arbitrage_run_button_generates_plan(client, engine):
     page = await client.get(
         f"/ui/plants/{plant.id}/arbitrage?date={target.isoformat()}"
     )
-    assert "Beklenen günlük gelir" in page.text
+    assert "Toplam tahmini gelir" in page.text
 
 
 async def test_arbitrage_run_requires_admin(client, engine):

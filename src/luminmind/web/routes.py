@@ -502,18 +502,17 @@ async def _forecast_revenue(
     return revenue
 
 
-async def _plant_forecast(
+async def _twin_forecast_series(
     influx: Any,
     plant: Plant,
     children: "Sequence[Plant]",
     is_parent: bool,
-    settings: Settings,
-) -> tuple[dict[str, str] | None, str]:
-    """Yarının üretim tahminini (twin_expected, gelecek gün) döndürür + gelir tahmini."""
+    day: date,
+) -> list[tuple[datetime, float]]:
+    """Verilen gün için twin (beklenen/tahmin) serisini tesis toplamı olarak döndürür."""
     if influx is None:
-        return None, ""
-    tomorrow = (datetime.now(tz=TRT) + timedelta(days=1)).date()
-    fstart, fstop = _trt_day_window(tomorrow)
+        return []
+    fstart, fstop = _trt_day_window(day)
     twin = await influx.query_twin_window(fstart, fstop)
     forecast: dict[datetime, float] = {}
     if is_parent:
@@ -522,10 +521,21 @@ async def _plant_forecast(
                 forecast[t] = forecast.get(t, 0.0) + v
     else:
         forecast = dict(twin.get(plant.vendor_plant_id, {}))
-    if not forecast:
-        return None, ""
+    return sorted(forecast.items())
 
-    pts = sorted(forecast.items())
+
+async def _plant_forecast(
+    influx: Any,
+    plant: Plant,
+    children: "Sequence[Plant]",
+    is_parent: bool,
+    settings: Settings,
+) -> tuple[dict[str, str] | None, str]:
+    """Yarının üretim tahminini (twin_expected, gelecek gün) döndürür + gelir tahmini."""
+    tomorrow = (datetime.now(tz=TRT) + timedelta(days=1)).date()
+    pts = await _twin_forecast_series(influx, plant, children, is_parent, tomorrow)
+    if not pts:
+        return None, ""
     f_energy = sum(v for _, v in pts) * 0.25
     f_peak = max(v for _, v in pts)
     revenue = await _forecast_revenue(pts, tomorrow, settings)
@@ -1232,7 +1242,23 @@ async def arbitrage_page(
         )
     ).all()
     plan = day_plans[0] if day_plans else None
-    combined_revenue = sum(p.expected_revenue_try for p in day_plans)
+    arbitrage_revenue = sum(p.expected_revenue_try for p in day_plans)
+
+    # PV üretim tahmini (seçili gün) + tahmini satış geliri — depolama planının
+    # yanında tek yerde: forecast + storage + market (DeepSolar Predict).
+    influx = request.app.state.influx
+    settings: Settings = request.app.state.settings
+    is_parent_view = len(children) > 0
+    pv_points = await _twin_forecast_series(influx, plant, children, is_parent_view, day)
+    pv_energy = sum(v for _, v in pv_points) * 0.25 if pv_points else 0.0
+    pv_revenue = (
+        await _forecast_revenue(pv_points, day, settings) if pv_points else 0.0
+    )
+    combined_revenue = arbitrage_revenue + pv_revenue
+    pv_chart = (
+        line_chart([Series("PV tahmini", "#8a7dd6", pv_points)], TRT, unit="kW")
+        if pv_points else ""
+    )
 
     prices: list[tuple[datetime, float]] = []
     actions: dict[datetime, tuple[str, float]] = {}
@@ -1269,8 +1295,13 @@ async def arbitrage_page(
             "action_labels": ACTION_LABELS,
             "has_batteries": len(battery_ids) > 0,
             "battery_count": len(battery_ids),
+            "arbitrage_revenue": arbitrage_revenue,
             "combined_revenue": combined_revenue,
-            "is_parent_view": len(children) > 0,
+            "pv_energy": _fmt_int(pv_energy) if pv_energy else "—",
+            "pv_revenue": f"{pv_revenue:,.0f}".replace(",", ".") if pv_revenue else "—",
+            "pv_chart": pv_chart,
+            "has_pv_forecast": bool(pv_points),
+            "is_parent_view": is_parent_view,
             "notice": request.query_params.get("notice"),
             "page_title": f"{plant.name} · Arbitraj",
         },
