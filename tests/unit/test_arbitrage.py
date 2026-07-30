@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
+import pytest
 import respx
 
 from luminmind.analytics.arbitrage.epias import EpiasClient, PriceSlot
@@ -9,6 +10,7 @@ from luminmind.analytics.arbitrage.optimizer import (
     ACTION_CHARGE,
     ACTION_DISCHARGE,
     BatterySpec,
+    SiteSpec,
     optimize_day,
 )
 
@@ -83,6 +85,88 @@ def test_cycle_limit_bounds_discharge_throughput():
     discharged = sum(s.power_kw for s in result.slots if s.action == ACTION_DISCHARGE)
     usable = battery.energy_kwh * (battery.soc_max - battery.soc_min)
     assert discharged <= usable * battery.max_cycles_per_day + 1e-3
+
+
+def midday_pv(peak_kw: float) -> list[float]:
+    """21:00 UTC'de başlayan 24 slot için basit bir üretim profili (kW)."""
+    profile = []
+    for index in range(24):
+        hour_utc = (21 + index) % 24
+        profile.append(peak_kw if 7 <= hour_utc <= 13 else 0.0)
+    return profile
+
+
+def test_battery_absorbs_energy_that_would_be_curtailed():
+    """Bağlantı limiti üretimin altındaysa batarya kırpılacak enerjiyi kurtarmalı."""
+    prices = hourly_prices([1500.0] * 24)  # düz fiyat: saf arbitraj kazancı yok
+    site = SiteSpec(pv_forecast_kw=midday_pv(1000.0), grid_limit_kw=600.0)
+    no_battery = BatterySpec(energy_kwh=1.0, power_kw=0.0)
+    with_battery = BatterySpec(energy_kwh=2000.0, power_kw=500.0)
+
+    baseline = optimize_day(prices, no_battery, site=site)
+    result = optimize_day(prices, with_battery, site=site)
+
+    # Bataryasız: limiti aşan her kW kırpılır (7 saat × 400 kW)
+    assert baseline.recovered_kwh == 0.0
+    assert baseline.curtailed_kwh == pytest.approx(7 * 400.0, abs=1.0)
+    # Bataryalı: kırpılacak enerjinin bir kısmı depolanıp sonra satılır
+    assert result.recovered_kwh > 0
+    assert result.curtailed_kwh < baseline.curtailed_kwh
+    assert result.expected_revenue_try > baseline.expected_revenue_try
+    assert any(s.action == ACTION_DISCHARGE for s in result.slots)
+
+
+def test_grid_limit_caps_total_export():
+    site = SiteSpec(pv_forecast_kw=midday_pv(1000.0), grid_limit_kw=600.0)
+    battery = BatterySpec(energy_kwh=2000.0, power_kw=500.0)
+    result = optimize_day(hourly_prices([1000.0] * 12 + [2600.0] * 12), battery, site=site)
+    for slot in result.slots:
+        export = slot.pv_export_kw + (slot.power_kw if slot.action == ACTION_DISCHARGE else 0.0)
+        assert export <= 600.0 + 1e-2
+
+
+def test_pv_routing_conserves_energy():
+    site = SiteSpec(pv_forecast_kw=midday_pv(1000.0), grid_limit_kw=600.0)
+    battery = BatterySpec(energy_kwh=2000.0, power_kw=500.0)
+    result = optimize_day(hourly_prices([1200.0] * 24), battery, site=site)
+    for slot, produced in zip(result.slots, midday_pv(1000.0), strict=True):
+        routed = slot.pv_to_battery_kw + slot.pv_export_kw + slot.curtailed_kw
+        assert routed == pytest.approx(produced, abs=1e-2)
+
+
+def test_no_pv_forecast_preserves_pure_arbitrage_behaviour():
+    prices = [1000.0] * 6 + [1500.0] * 12 + [2600.0] * 4 + [1500.0] * 2
+    with_site = optimize_day(hourly_prices(prices), BATTERY, site=SiteSpec())
+    without_site = optimize_day(hourly_prices(prices), BATTERY)
+    assert with_site.expected_revenue_try == pytest.approx(without_site.expected_revenue_try)
+    assert with_site.pv_revenue_try == 0.0
+    assert with_site.curtailed_kwh == 0.0
+
+
+def test_grid_charging_can_be_forbidden():
+    prices = [1000.0] * 6 + [1500.0] * 12 + [2600.0] * 4 + [1500.0] * 2
+    site = SiteSpec(allow_grid_charge=False)
+    result = optimize_day(hourly_prices(prices), BATTERY, site=site)
+    assert all(s.grid_charge_kw == 0.0 for s in result.slots)
+
+
+def test_feed_in_tariff_overrides_market_price_for_pv():
+    """Sabit alım garantisi varsa PV geliri piyasa fiyatından bağımsızdır."""
+    site = SiteSpec(pv_forecast_kw=midday_pv(400.0), feed_in_try_mwh=2900.0)
+    flat = BatterySpec(energy_kwh=1.0, power_kw=0.0)  # batarya etkisiz
+    result = optimize_day(hourly_prices([500.0] * 24), flat, site=site)
+    # 7 saat × 400 kW × 2900 ₺/MWh = 8120 ₺
+    assert result.pv_revenue_try == pytest.approx(7 * 400.0 * 2.9, rel=1e-3)
+
+
+def test_revenue_splits_into_battery_and_pv_components():
+    prices = [1000.0] * 6 + [1500.0] * 12 + [2600.0] * 4 + [1500.0] * 2
+    site = SiteSpec(pv_forecast_kw=midday_pv(300.0), grid_limit_kw=2000.0)
+    result = optimize_day(hourly_prices(prices), BATTERY, site=site)
+    assert result.pv_revenue_try > 0
+    assert result.expected_revenue_try == pytest.approx(
+        result.battery_revenue_try + result.pv_revenue_try, rel=1e-3
+    )
 
 
 def test_empty_prices_return_empty_plan():

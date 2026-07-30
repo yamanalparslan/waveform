@@ -21,8 +21,9 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from luminmind.core.models import AnomalyEvent, Inverter, Plant
+from luminmind.core.models import AnomalyEvent, Inverter
 from luminmind.core.schemas import TelemetryPoint
+from luminmind.core.series import resolve_series_key
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +38,11 @@ KIND_INV_OFFLINE = "inv_offline"
 KIND_INV_OVERHEAT = "inv_overheat"
 KIND_INV_ERROR = "inv_error"
 
+# Arayüzde gösterilen etiketler — tesis sahibinin anlayacağı dilde tutulur
 DEVICE_KIND_LABELS = {
-    KIND_INV_OFFLINE: "İnvertör çevrimdışı",
-    KIND_INV_OVERHEAT: "Aşırı sıcaklık",
-    KIND_INV_ERROR: "Üretici arıza kodu",
+    KIND_INV_OFFLINE: "Veri göndermedi",
+    KIND_INV_OVERHEAT: "Fazla ısındı",
+    KIND_INV_ERROR: "Arıza bildirdi",
 }
 
 
@@ -84,24 +86,23 @@ async def upsert_inverter_state(
     """Cihaz durum cache'ini günceller. Yeni cihazsa otomatik oluşturur."""
     updated = 0
     for snap in snapshots:
-        plant = (
-            await session.scalars(
-                select(Plant).where(Plant.vendor_plant_id == snap.vendor_plant_id)
-            )
-        ).one_or_none()
-        if plant is None:
+        # Telemetrideki anahtar artık sahanın; tesis üzerinden aramak göçten
+        # sonra hiçbir kaydı bulamaz ve senkron sessizce durur.
+        target = await resolve_series_key(session, snap.vendor_plant_id)
+        if target is None:
+            logger.warning("seri anahtarı çözümlenemedi: %s", snap.vendor_plant_id)
             continue
-        inverter = (
-            await session.scalars(
-                select(Inverter).where(
-                    Inverter.plant_id == plant.id,
-                    Inverter.vendor_device_id == snap.vendor_device_id,
-                )
-            )
-        ).one_or_none()
+        plant, site = target.plant, target.site
+        criteria = [Inverter.vendor_device_id == snap.vendor_device_id]
+        # Cihaz numarası yalnızca saha içinde tekil (iki fabrikada da 1 var)
+        criteria.append(
+            Inverter.site_id == site.id if site else Inverter.plant_id == plant.id
+        )
+        inverter = (await session.scalars(select(Inverter).where(*criteria))).one_or_none()
         if inverter is None:
             inverter = Inverter(
                 plant_id=plant.id,
+                site_id=site.id if site else None,
                 vendor_device_id=snap.vendor_device_id,
                 model=f"{plant.vendor} device",
             )
@@ -117,13 +118,21 @@ async def upsert_inverter_state(
 
 @dataclass(frozen=True)
 class HealthFinding:
-    """Sağlık kuralı tetikleyicisi (anomali olayına dönüştürülür)."""
+    """Sağlık kuralı tetikleyicisi (anomali olayına dönüştürülür).
+
+    `site_id` taşınmak zorunda: cihaz numarası yalnızca saha içinde tekildir
+    (hem Üretim hem Mekanik fabrikasında "1 nolu invertör" var). Sahasız
+    tekilleştirme iki fabrikanın aynı numaralı cihazını tek olaya indirir ve
+    biri diğerini ezer — düzelttiğimiz telemetri çakışmasının tıpatıp aynısı,
+    bu kez uyarı tarafında.
+    """
 
     kind: str
     severity: str  # warning | critical
     deviation_pct: float  # anomaly_events şeması gerektirdiği için taşıyıcı alan
     started_at: datetime
     evidence: dict[str, str | float | None]
+    site_id: uuid.UUID | None = None
 
 
 def evaluate_inverter(inverter: Inverter, now: datetime) -> list[HealthFinding]:
@@ -132,6 +141,7 @@ def evaluate_inverter(inverter: Inverter, now: datetime) -> list[HealthFinding]:
     if inverter.last_seen_at is None:
         return findings  # henüz veri yok, kural uygulama
 
+    site_id = inverter.site_id
     age = now - inverter.last_seen_at
     if age > STALE_AFTER:
         findings.append(
@@ -144,6 +154,7 @@ def evaluate_inverter(inverter: Inverter, now: datetime) -> list[HealthFinding]:
                     "device_id": inverter.vendor_device_id,
                     "minutes_since_last": round(age.total_seconds() / 60, 1),
                 },
+                site_id=site_id,
             )
         )
         # offline'ken diğer kurallar anlamsız — burada bit
@@ -161,6 +172,7 @@ def evaluate_inverter(inverter: Inverter, now: datetime) -> list[HealthFinding]:
                     "temp_c": inverter.last_temp_c,
                     "threshold_c": OVERHEAT_C,
                 },
+                site_id=site_id,
             )
         )
 
@@ -176,6 +188,7 @@ def evaluate_inverter(inverter: Inverter, now: datetime) -> list[HealthFinding]:
                     "error_code": inverter.last_error_code,
                     "status": inverter.last_status,
                 },
+                site_id=site_id,
             )
         )
     elif inverter.last_status is not None and inverter.last_status.upper() not in HEALTHY_STATUSES:
@@ -189,6 +202,7 @@ def evaluate_inverter(inverter: Inverter, now: datetime) -> list[HealthFinding]:
                     "device_id": inverter.vendor_device_id,
                     "status": inverter.last_status,
                 },
+                site_id=site_id,
             )
         )
     return findings
@@ -199,9 +213,13 @@ async def apply_findings(
 ) -> tuple[int, int]:
     """Bulguları anomali tablosuna işler (dedupe + auto-resolve).
 
-    Aynı (plant, kind, evidence.device_id) için açık olay varsa güncellenir;
-    yoksa yenisi oluşturulur. Aynı grup için bulgusuz gelen açık olaylar
-    otomatik `resolved` yapılır.
+    Tekilleştirme anahtarı **(kind, site_id, device_id)**. Sahayı anahtara
+    katmak zorunlu: cihaz numarası yalnızca saha içinde tekil olduğu için
+    sahasız anahtar iki fabrikanın "1 nolu invertör"ünü aynı olay sayar, biri
+    diğerinin üzerine yazar ve ikinci fabrikanın arızası hiç görünmez.
+
+    Aynı anahtar için açık olay varsa güncellenir; yoksa yenisi oluşturulur.
+    Bulgusuz gelen açık olaylar otomatik `resolved` yapılır.
     """
     created = 0
     resolved = 0
@@ -215,13 +233,15 @@ async def apply_findings(
         )
     ).all()
 
-    def _device(e: AnomalyEvent) -> str:
-        return str(e.evidence.get("device_id", ""))
+    def _key(kind: str, site_id: uuid.UUID | None, device_id: str) -> tuple[str, str, str]:
+        return kind, str(site_id or ""), device_id
 
-    finding_by_key = {(f.kind, str(f.evidence.get("device_id", ""))): f for f in findings}
+    finding_by_key = {
+        _key(f.kind, f.site_id, str(f.evidence.get("device_id", ""))): f for f in findings
+    }
 
     for event in open_events:
-        key = (event.kind, _device(event))
+        key = _key(event.kind, event.site_id, str(event.evidence.get("device_id", "")))
         if key in finding_by_key:
             # güncelle
             f = finding_by_key.pop(key)
@@ -238,6 +258,7 @@ async def apply_findings(
         session.add(
             AnomalyEvent(
                 plant_id=plant_id,
+                site_id=f.site_id,
                 kind=f.kind,
                 severity=f.severity,
                 deviation_pct=f.deviation_pct,

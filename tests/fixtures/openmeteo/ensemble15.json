@@ -1,0 +1,31 @@
+{
+  "latitude": 37.87,
+  "longitude": 32.48,
+  "timezone": "UTC",
+  "minutely_15": {
+    "time": [
+      "2026-07-20T09:00",
+      "2026-07-20T09:15",
+      "2026-07-20T09:30",
+      "2026-07-20T09:45"
+    ],
+    "shortwave_radiation_icon_seamless": [820.5, 835.0, 842.1, 850.2],
+    "direct_normal_irradiance_icon_seamless": [880.0, 890.5, 895.0, 900.1],
+    "diffuse_radiation_icon_seamless": [110.0, 108.5, 107.0, 106.2],
+    "temperature_2m_icon_seamless": [31.2, 31.6, 32.0, 32.3],
+    "wind_speed_10m_icon_seamless": [3.1, 3.4, 3.2, 3.0],
+    "relative_humidity_2m_icon_seamless": [34, 33, 33, 32],
+    "precipitation_icon_seamless": [0.0, 0.0, 0.0, 0.0],
+    "surface_pressure_icon_seamless": [908.1, 908.0, 907.9, 907.8],
+    "shortwave_radiation_gfs_seamless": [790.0, 800.0, 805.0, 812.0],
+    "direct_normal_irradiance_gfs_seamless": [845.0, 852.0, 858.0, 864.0],
+    "diffuse_radiation_gfs_seamless": [118.0, 117.0, 116.0, 115.0],
+    "temperature_2m_gfs_seamless": [30.8, 31.1, 31.5, 31.9],
+    "wind_speed_10m_gfs_seamless": [2.8, 3.0, 3.1, 3.0],
+    "relative_humidity_2m_gfs_seamless": [36, 35, 35, 34],
+    "precipitation_gfs_seamless": [0.0, 0.0, 0.0, 0.0],
+    "surface_pressure_gfs_seamless": [908.4, 908.3, 908.2, 908.1],
+    "shortwave_radiation_ecmwf_ifs025": [null, null, null, null],
+    "temperature_2m_ecmwf_ifs025": [null, null, null, null]
+  }
+}

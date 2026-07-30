@@ -1,18 +1,22 @@
 {% extends "base.html" %}
 {% block title %}{{ device_id }} · {{ plant.name }}{% endblock %}
 {% block crumbs %}
-<a href="/ui">Genel Bakış</a> ·
-<a href="/ui/plants/{{ plant.id }}">{{ plant.name }}</a> ·
+<a href="/ui">Portföy</a><span class="sep">›</span>
+<a href="{{ plant_url }}">{{ plant.name }}</a><span class="sep">›</span>
+{% if site %}<a href="{{ plant_url }}/sites/{{ site.code }}">{{ site.name }}</a>
+<span class="sep">›</span>{% endif %}
 <b>İnvertör {{ device_id }}</b>
 {% endblock %}
 {% block content %}
 <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap">
   <div>
-    <h1>İnvertör {{ device_id }}</h1>
+    <h1>{{ device_id }} nolu invertör</h1>
     <p class="sub">
-      <span class="chip muted">{{ plant.vendor }}</span>
       {% if inverter.model %}<span class="chip plain">{{ inverter.model }}</span>{% endif %}
-      {% if inverter.ac_capacity_kw %}<span class="chip plain">{{ "%.1f"|format(inverter.ac_capacity_kw) }} kW</span>{% endif %}
+      {% if inverter.ac_capacity_kw %}<span class="chip plain">{{ "%.1f"|format(inverter.ac_capacity_kw) }} kW kapasite</span>{% endif %}
+      {% if kpis.error_or_status and kpis.error_or_status != '—' %}
+      <span class="chip muted">Cihaz bildirimi: {{ kpis.error_or_status }}</span>
+      {% endif %}
     </p>
   </div>
   <span class="chip {{ health.chip }}" style="font-size:14px; padding:6px 14px">
@@ -22,45 +26,48 @@
 
 <div class="toolbar">
   <form method="get" class="row-inline">
-    <label for="date" style="margin:0; text-transform:none">Tarih</label>
+    <label for="date" style="margin:0; text-transform:none">Hangi gün</label>
     <input id="date" type="date" name="date" value="{{ day_str }}">
     <button class="primary">Göster</button>
   </form>
 </div>
 
 <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
-  <div class="kpi accent-amber">
-    <div class="label">Anlık güç</div>
-    <div class="value">{{ kpis.last_power }}<small>kW</small></div>
-    <div class="trend">{{ kpis.last_seen }}</div>
+  <div class="kpi accent-green">
+    <div class="label">O günkü kazancı</div>
+    <div class="value">{{ kpis.money }}</div>
+    <div class="trend">{{ kpis.energy_kwh }} kWh üretim</div>
   </div>
-  <div class="kpi accent-teal">
-    <div class="label">Günlük tepe</div>
-    <div class="value">{{ kpis.peak_power }}<small>kW</small></div>
-    <div class="trend">gün içi maksimum</div>
+  <div class="kpi accent-amber">
+    <div class="label">Şu anki gücü</div>
+    <div class="value">{{ kpis.last_power }}<small>kW</small></div>
+    <div class="trend">son bağlantı: {{ kpis.last_seen }}</div>
   </div>
   <div class="kpi accent-blue">
-    <div class="label">Günlük üretim</div>
-    <div class="value">{{ kpis.energy_kwh }}<small>kWh</small></div>
-    <div class="trend">15 dk toplamı</div>
+    <div class="label">Gün içindeki en yüksek</div>
+    <div class="value">{{ kpis.peak_power }}<small>kW</small></div>
+    <div class="trend">genelde öğle saatlerinde olur</div>
   </div>
-  <div class="kpi {{ 'accent-coral' if kpis.temp_hot else 'accent-teal' }}">
-    <div class="label">Sıcaklık</div>
+  <div class="kpi {{ 'accent-red' if kpis.temp_hot else 'accent-green' }}">
+    <div class="label">Sıcaklığı</div>
     <div class="value" style="color:{{ kpis.temp_color }}">{{ kpis.last_temp }}<small>°C</small></div>
-    <div class="trend">son ölçüm</div>
+    <div class="trend {{ 'down' if kpis.temp_hot else '' }}">
+      {{ 'fazla ısınmış' if kpis.temp_hot else 'normal aralıkta' }}</div>
   </div>
 </div>
 
-<h2>Güç eğrisi (kW)</h2>
+<h2>Gün boyunca ürettiği güç</h2>
 <div class="chart-wrap">{{ power_chart | safe }}</div>
 
-<h2>Sıcaklık eğrisi (°C)</h2>
+<h2>Gün boyunca sıcaklığı</h2>
 <div class="chart-wrap">{{ temp_chart | safe }}</div>
+<p class="note">Cihaz sıcaklığının 65 °C'yi geçmesi verim kaybına, 75 °C'yi geçmesi
+cihazın kendini korumaya alıp durmasına yol açabilir.</p>
 
-<h2>Cihaza ait son olaylar</h2>
+<h2>Bu cihazla ilgili geçmiş</h2>
 <div class="card">
 <table>
-  <tr><th>Tür</th><th>Şiddet</th><th>Başlangıç (TRT)</th><th>Durum</th></tr>
+  <tr><th>Ne oldu</th><th>Önem</th><th>Ne zaman</th><th>Durum</th></tr>
   {% for e in device_events %}
   <tr>
     <td>{{ e.kind_label }}</td>
@@ -71,7 +78,7 @@
   {% else %}
   <tr><td colspan="4">
     <div class="note" style="padding:20px 0; text-align:center; margin:0">
-      Bu cihaza dair kayıtlı olay yok
+      Bu cihazla ilgili bir sorun kaydedilmemiş
     </div>
   </td></tr>
   {% endfor %}

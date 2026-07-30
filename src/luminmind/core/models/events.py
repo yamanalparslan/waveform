@@ -28,6 +28,9 @@ class AnomalyEvent(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     plant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("plants.id"))
+    # Sapma saha serisinde ölçülür; hangi fabrikanın sorunu olduğu buradan
+    # okunur. Göçten önceki olaylarda boş kalır (geriye uyum).
+    site_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sites.id"), index=True)
     kind: Mapped[str] = mapped_column(String(30))  # microcrack | shading | soiling
     severity: Mapped[str] = mapped_column(String(20), default="warning")
     deviation_pct: Mapped[float] = mapped_column(Float)
@@ -49,6 +52,11 @@ class ArbitragePlan(Base):
     plan_date: Mapped[date] = mapped_column(Date)
     market: Mapped[str] = mapped_column(String(10))  # DAM | IDM
     expected_revenue_try: Mapped[float] = mapped_column(Float, default=0.0)
+    # Gelirin kaynağına ayrışması + PV yönlendirmesinin kazandırdıkları
+    battery_revenue_try: Mapped[float] = mapped_column(Float, default=0.0)
+    pv_revenue_try: Mapped[float] = mapped_column(Float, default=0.0)
+    curtailed_kwh: Mapped[float] = mapped_column(Float, default=0.0)
+    recovered_kwh: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -68,5 +76,10 @@ class ArbitrageSlot(Base):
     action: Mapped[str] = mapped_column(String(10))  # charge | discharge | idle
     power_kw: Mapped[float] = mapped_column(Float, default=0.0)
     price_try_mwh: Mapped[float] = mapped_column(Float)
+    # PV yönlendirmesi: üretimin nereye gittiği (kW)
+    pv_to_battery_kw: Mapped[float] = mapped_column(Float, default=0.0)
+    pv_export_kw: Mapped[float] = mapped_column(Float, default=0.0)
+    grid_charge_kw: Mapped[float] = mapped_column(Float, default=0.0)
+    curtailed_kw: Mapped[float] = mapped_column(Float, default=0.0)
 
     plan: Mapped[ArbitragePlan] = relationship(back_populates="slots")

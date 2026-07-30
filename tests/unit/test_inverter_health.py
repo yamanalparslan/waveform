@@ -1,5 +1,6 @@
 """İnvertör sağlık senkronizasyonu ve uyarı motoru testleri."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -191,6 +192,64 @@ async def test_apply_findings_resolves_when_healthy(engine):
         event = (await session.scalars(select(AnomalyEvent))).one()
         assert event.status == "resolved"
         assert event.ended_at is not None
+
+
+async def test_same_device_number_in_two_sites_stays_two_events(engine):
+    """Cihaz numarası saha içinde tekil; sahasız tekilleştirme birini yok ederdi."""
+    from luminmind.analytics.inverter_health import HealthFinding
+    from luminmind.core.models import Site
+
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        session.add_all(
+            [
+                Site(
+                    plant_id=plant.id, name="Üretim", code="uretim",
+                    series_key="tescom-izmir-uretim", dc_capacity_kwp=400.0, display_order=1,
+                ),
+                Site(
+                    plant_id=plant.id, name="Mekanik", code="mekanik",
+                    series_key="tescom-izmir-mekanik", dc_capacity_kwp=250.0, display_order=2,
+                ),
+            ]
+        )
+
+    async with session_scope(engine) as session:
+        plant = (await session.scalars(select(Plant))).one()
+        sites = {s.code: s for s in (await session.scalars(select(Site))).all()}
+        findings = [
+            HealthFinding(
+                kind=KIND_INV_OFFLINE, severity="warning", deviation_pct=-100.0,
+                started_at=NOW, evidence={"device_id": "1"}, site_id=sites[code].id,
+            )
+            for code in ("uretim", "mekanik")
+        ]
+        created, resolved = await apply_findings(session, plant.id, findings, NOW)
+        assert (created, resolved) == (2, 0)
+
+    async with session_scope(engine) as session:
+        events = (await session.scalars(select(AnomalyEvent))).all()
+        assert len({e.site_id for e in events}) == 2  # her fabrikanın kendi olayı
+
+
+def test_findings_inherit_the_site_of_their_device():
+    site_id = uuid.uuid4()
+    inv = Inverter(
+        vendor_device_id="1", site_id=site_id,
+        last_seen_at=NOW - STALE_AFTER * 2, last_power_kw=0.0,
+    )
+    [finding] = evaluate_inverter(inv, NOW)
+    assert finding.kind == KIND_INV_OFFLINE
+    assert finding.site_id == site_id
+
+
+def test_siteless_install_still_produces_findings():
+    """Mock/Huawei kurulumlarında saha yok; kural motoru yine çalışmalı."""
+    inv = Inverter(
+        vendor_device_id="1", last_seen_at=NOW - STALE_AFTER * 2, last_power_kw=0.0
+    )
+    [finding] = evaluate_inverter(inv, NOW)
+    assert finding.site_id is None
 
 
 def _make_offline_finding():

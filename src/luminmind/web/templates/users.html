@@ -2,8 +2,8 @@
 {% block title %}Kullanıcılar{% endblock %}
 {% block crumbs %}<b>Kullanıcılar</b>{% endblock %}
 {% block content %}
-<h1>Kullanıcı yönetimi</h1>
-<p class="sub">Admin ve görüntüleyici rolündeki hesaplar</p>
+<h1>Kullanıcılar</h1>
+<p class="sub">Panele kimlerin girebileceğini buradan yönetirsiniz</p>
 
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if success %}<div class="success">{{ success }}</div>{% endif %}
@@ -13,22 +13,23 @@
     <h2>Kayıtlı kullanıcılar</h2>
     <div class="card">
       <table>
-        <tr><th>E-posta</th><th>Rol</th><th>Oluşturuldu</th><th>İşlem</th></tr>
+        <tr><th>E-posta</th><th>Yetki</th><th>Eklendiği tarih</th><th></th></tr>
         {% for u in users %}
         <tr>
           <td>{{ u.email }}</td>
           <td>
-            <span class="chip {{ 'violet' if u.role == 'admin' else 'muted' }}">{{ u.role }}</span>
+            <span class="chip {{ 'violet' if u.role == 'admin' else 'muted' }}">
+              {{ 'Yönetici' if u.role == 'admin' else 'Sadece görüntüler' }}</span>
           </td>
           <td class="num">{{ u.created_at }}</td>
           <td>
             {% if u.id != user.id %}
             <form class="inline" method="post" action="/ui/kullanicilar/{{ u.id }}/rol">
               <input type="hidden" name="role" value="{{ 'viewer' if u.role == 'admin' else 'admin' }}">
-              <button>{{ 'Görüntüleyici yap' if u.role == 'admin' else 'Admin yap' }}</button>
+              <button>{{ 'Yetkisini kıs' if u.role == 'admin' else 'Yönetici yap' }}</button>
             </form>
             {% else %}
-            <span class="chip plain">Bu sen</span>
+            <span class="chip plain">Siz</span>
             {% endif %}
           </td>
         </tr>
@@ -44,10 +45,10 @@
         <input name="email" required placeholder="ad@luminmind.local">
         <label>Şifre</label>
         <input name="password" type="password" required minlength="4">
-        <label>Rol</label>
+        <label>Yetki</label>
         <select name="role">
-          <option value="viewer">Görüntüleyici</option>
-          <option value="admin">Admin</option>
+          <option value="viewer">Sadece görüntüler</option>
+          <option value="admin">Yönetici (santral ekleyip düzenleyebilir)</option>
         </select>
         <div style="margin-top:18px">
           <button class="primary" style="width:100%; justify-content:center">

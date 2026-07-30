@@ -15,7 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from luminmind.analytics.classifiers import AnomalyFinding, classify_window
-from luminmind.analytics.comparison import build_deviation_series, plant_actual_from_samples
+from luminmind.analytics.comparison import (
+    build_deviation_series,
+    min_expected_kw,
+    plant_actual_from_samples,
+)
 from luminmind.config import Settings, get_settings
 from luminmind.core.aggregate import RawSample
 from luminmind.core.influx import InfluxStore
@@ -33,6 +37,10 @@ class ComparisonSource(Protocol):
         self, start: datetime, stop: datetime
     ) -> dict[str, dict[datetime, float]]: ...
 
+    async def query_twin_band_window(
+        self, start: datetime, stop: datetime
+    ) -> dict[str, dict[datetime, tuple[float, float]]]: ...
+
 
 async def apply_finding(
     engine: AsyncEngine,
@@ -42,20 +50,21 @@ async def apply_finding(
 ) -> bool:
     """Bulguyu olay tablosuna işler; yeni olay oluşturduysa True döndürür."""
     from luminmind.core.db import session_scope
-    from luminmind.core.models import AnomalyEvent, Plant
+    from luminmind.core.models import AnomalyEvent
+    from luminmind.core.series import resolve_series_key
 
     async with session_scope(engine) as session:
-        plant = (
-            await session.scalars(select(Plant).where(Plant.vendor_plant_id == vendor_plant_id))
-        ).one_or_none()
-        if plant is None:
-            logger.warning("plant %s not found in Postgres; finding skipped", vendor_plant_id)
+        target = await resolve_series_key(session, vendor_plant_id)
+        if target is None:
+            logger.warning("seri %s Postgres'te bulunamadı; bulgu atlandı", vendor_plant_id)
             return False
+        plant, site = target.plant, target.site
+        # Tekilleştirme saha bazında: bir fabrikanın kirliliği diğerinin açık
+        # olayını kapatmamalı
+        scope = AnomalyEvent.site_id == site.id if site else AnomalyEvent.plant_id == plant.id
         open_events: Sequence[AnomalyEvent] = (
             await session.scalars(
-                select(AnomalyEvent).where(
-                    AnomalyEvent.plant_id == plant.id, AnomalyEvent.status == "open"
-                )
+                select(AnomalyEvent).where(scope, AnomalyEvent.status == "open")
             )
         ).all()
 
@@ -76,6 +85,7 @@ async def apply_finding(
         session.add(
             AnomalyEvent(
                 plant_id=plant.id,
+                site_id=site.id if site else None,
                 kind=finding.kind,
                 severity=finding.severity,
                 deviation_pct=finding.deviation_pct,
@@ -123,13 +133,22 @@ async def run_comparison(
 
     anomalies = 0
     try:
+        from luminmind.workers.tasks.accuracy import plant_capacities
+
+        capacities = await plant_capacities(engine)
         raw_samples = await source.query_raw_window(start, stop)
         actual_by_plant = plant_actual_from_samples(raw_samples)
         expected_by_plant = await source.query_twin_window(start, stop)
+        bands = await source.query_twin_band_window(start, stop)
 
         for plant_id, expected in expected_by_plant.items():
             actual = actual_by_plant.get(plant_id, {})
-            samples = build_deviation_series(actual, expected)
+            samples = build_deviation_series(
+                actual,
+                expected,
+                min_expected_kw_threshold=min_expected_kw(capacities.get(plant_id)),
+                band=bands.get(plant_id),
+            )
             finding = classify_window(samples)
             created = await apply_finding(engine, plant_id, finding, analysis_end=stop)
             if finding is not None:

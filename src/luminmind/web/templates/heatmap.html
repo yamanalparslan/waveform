@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Isı haritası{% endblock %}
+{% block crumbs %}
+<a href="/ui">Portföy</a><span class="sep">›</span>
+<a href="{{ plant_url }}">{{ plant.name }}</a><span class="sep">›</span>
+<b>Isı haritası</b>{% if site %} · {{ site.name }}{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <h1 style="margin:0">Cihaz × saat performansı</h1>
+  <span class="chip plain">{{ device_count }} cihaz · {{ hours_label }}</span>
+  <span class="spacer"></span>
+  <form method="get" action="{{ plant_url }}/heatmap" class="row-inline" style="gap:8px">
+    {% if site_options %}
+    <select name="site" style="max-width:210px">
+      <option value="">Tüm fabrikalar</option>
+      {% for o in site_options %}
+      <option value="{{ o.code }}" {{ 'selected' if o.code == site_code }}>{{ o.name }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <input type="date" name="date" value="{{ day_str }}" style="max-width:170px">
+    <button>Göster</button>
+  </form>
+</div>
+
+<div class="chart-wrap">{{ heatmap_svg | safe }}</div>
+
+<div class="prio-legend" style="margin-top:12px">
+  {% for item in heatmap_legend %}
+  <span class="item"><span class="chip {{ item.chip }}">{{ item.label }}</span></span>
+  {% endfor %}
+</div>
+
+<div class="card pad" style="margin-top:18px">
+  <h3>Bu ızgara neyi gösteriyor?</h3>
+  <p class="note" style="margin-top:6px">
+    Her hücre, o cihazın o saatteki üretiminin beklenenin yüzde kaçı olduğunu söyler.
+    Cihazın beklentisi, sahanın hava durumuna göre beklenen üretiminin cihaz sayısına
+    <b>eşit bölünmesiyle</b> bulunur — üretici cihaz başına anma gücü vermiyor. Bu
+    yüzden ızgara mutlak bir doğruluk ölçüsü değil; <b>cihazlar arasındaki farkı</b>
+    görmeye yarar. Bir satır komşularından belirgin biçimde soğuksa sorun o cihazda.
+  </p>
+  <p class="note">
+    Boş (nötr) hücreler ölçüm gelmediği ya da o saatte anlamlı bir beklenti olmadığı
+    (şafak/alacakaranlık) anlamına gelir — sıfır üretim değil.
+  </p>
+</div>
+{% endblock %}

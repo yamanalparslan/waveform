@@ -1,70 +1,80 @@
 {% extends "base.html" %}
-{% block title %}Anomaliler · {{ plant.name }}{% endblock %}
-{% block crumbs %}<a href="/ui">Genel Bakış</a> ·
-  <a href="/ui/plants/{{ plant.id }}">{{ plant.name }}</a> · <b>Anomaliler</b>{% endblock %}
+{% block title %}Yapılacaklar · {{ plant.name }}{% endblock %}
+{% block crumbs %}<a href="/ui">Bugün</a> ·
+  <a href="/ui/plants/{{ plant.id }}">{{ plant.name }}</a> · <b>Yapılacaklar</b>{% endblock %}
 {% block content %}
-<h1>Anomaliler</h1>
-<p class="sub">{{ plant.name }} · dijital ikiz karşılaştırmasından türetilen şüpheli olaylar</p>
+<h1>Yapılacaklar</h1>
+<p class="sub">{{ plant.name }} · santralinizde fark ettiğimiz, ilgilenmeniz gereken şeyler</p>
 
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
-  <div class="kpi {{ 'accent-coral' if stats.open else 'accent-teal' }}">
-    <div class="label">Açık</div>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+  <div class="kpi {{ 'accent-red' if stats.open else 'accent-green' }}">
+    <div class="label">Bekleyen</div>
     <div class="value">{{ stats.open }}</div>
+    <div class="trend">henüz el atılmadı</div>
   </div>
-  <div class="kpi accent-blue">
-    <div class="label">Onaylandı</div>
+  <div class="kpi accent-amber">
+    <div class="label">İlgileniliyor</div>
     <div class="value">{{ stats.acked }}</div>
+    <div class="trend">takibe alındı</div>
   </div>
-  <div class="kpi accent-teal">
-    <div class="label">Çözüldü</div>
+  <div class="kpi accent-green">
+    <div class="label">Tamamlandı</div>
     <div class="value">{{ stats.resolved }}</div>
+    <div class="trend">çözülmüş işler</div>
   </div>
+  {% if pending_loss %}
+  <div class="kpi accent-red">
+    <div class="label">Günlük kaybınız</div>
+    <div class="value" style="font-size:24px">{{ pending_loss }}</div>
+    <div class="trend down">bu işler çözülmezse</div>
+  </div>
+  {% endif %}
 </div>
 
-<h2>Kayıtlar</h2>
+<h2>İşler</h2>
 <div class="card">
-<table>
-  <tr><th>Tür</th><th>Şiddet</th><th>Sapma</th><th>Başlangıç (TRT)</th>
-      <th>Durum</th><th>İşlem</th></tr>
-  {% for event in events %}
-  <tr onclick="window.location.href='/ui/anomalies/{{ event.id }}'" style="cursor:pointer">
-    <td><a href="/ui/anomalies/{{ event.id }}" style="color:var(--amber)">
-      {{ kind_labels.get(event.kind, event.kind) }}</a></td>
-    <td><span class="chip {{ 'crit' if event.severity == 'critical' else 'warn' }}">
-      {{ severity_labels.get(event.severity, event.severity) }}</span></td>
-    <td class="num" style="color:{{ 'var(--coral)' if event.deviation_pct < -10 else 'var(--amber)' }}">
-      {{ "%.1f"|format(event.deviation_pct) }}%</td>
-    <td class="num">{{ event.started_local }}</td>
-    <td><span class="chip {{ status_chip.get(event.status, 'muted') }}">
-      {{ status_labels.get(event.status, event.status) }}</span></td>
-    <td>
-      {% if event.status == "open" %}
-      <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status"
-        onclick="event.stopPropagation()">
+  {% for t in tasks %}
+  <div class="task {{ 'done' if t.status == 'resolved' }}">
+    <div class="task-head">
+      {% if t.status == 'open' %}
+      <span class="chip {{ t.urgency_chip }}">{{ t.urgency_label }}</span>
+      {% else %}
+      <span class="chip {{ t.status_chip }}">{{ t.status_label }}</span>
+      {% endif %}
+      <span style="flex:1"></span>
+      <span class="task-since">{{ t.since_label }}</span>
+    </div>
+    <div class="task-title">
+      <a href="/ui/anomalies/{{ t.id }}" style="color:inherit">{{ t.title }}</a>
+    </div>
+    {% if t.status != 'resolved' %}
+    <div class="task-impact">{{ t.impact }}</div>
+    {% endif %}
+    <div class="task-action">{{ t.action }}</div>
+    <div class="row-inline" style="margin-top:12px">
+      {% if t.status == "open" %}
+      <form class="inline" method="post" action="/ui/anomalies/{{ t.id }}/status">
         <input type="hidden" name="status" value="acked">
         <input type="hidden" name="back" value="{{ back_url }}">
-        <button>Onayla</button>
+        <button>İlgileniyorum</button>
       </form>
       {% endif %}
-      {% if event.status != "resolved" %}
-      <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status"
-        onclick="event.stopPropagation()">
+      {% if t.status != "resolved" %}
+      <form class="inline" method="post" action="/ui/anomalies/{{ t.id }}/status">
         <input type="hidden" name="status" value="resolved">
         <input type="hidden" name="back" value="{{ back_url }}">
-        <button>Çöz</button>
+        <button class="primary">Halloldu</button>
       </form>
       {% endif %}
-    </td>
-  </tr>
-  {% else %}
-  <tr><td colspan="6">
-    <div class="note" style="padding:24px 0; text-align:center; margin:0">
-      Kayıtlı anomali yok — tesis sağlıklı görünüyor
+      <a class="btn ghost" href="/ui/anomalies/{{ t.id }}">Ayrıntı</a>
     </div>
-  </td></tr>
+  </div>
+  {% else %}
+  <div class="note" style="padding:28px 20px; text-align:center; margin:0">
+    Yapılacak bir iş yok — santraliniz sorunsuz çalışıyor.
+  </div>
   {% endfor %}
-</table>
 </div>
-<p class="note">Sınıflandırma kural tabanlı + istatistiksel (medyan/MAD) olduğundan
-sonuçlar "şüphe" seviyesindedir; etiketli saha verisiyle doğruluk artacaktır.</p>
+<p class="note">Bu işler, santralinizden gelen ölçümlerin havanın elverdiği üretimle
+karşılaştırılmasıyla otomatik çıkarılır. Parasal etkiler yaklaşık değerlerdir.</p>
 {% endblock %}

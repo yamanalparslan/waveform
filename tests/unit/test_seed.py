@@ -38,3 +38,25 @@ async def test_seed_is_idempotent(engine):
     async with session_scope(engine) as session:
         assert len((await session.scalars(select(User))).all()) == 1
         assert len((await session.scalars(select(Plant))).all()) == 1
+
+
+async def test_demo_plant_is_not_seeded_with_real_vendor(engine, monkeypatch):
+    """Gerçek üretici bağlıyken demo tesis kurulmamalı.
+
+    Aksi halde kaldırılan Konya GES her `init` çalıştırmasında geri gelir ve
+    saha göçünü sessizce bozar.
+    """
+    from luminmind.config import Settings, get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "luminmind.scripts.seed.get_settings",
+        lambda: Settings(lm_use_mock_vendors=False),
+    )
+    async with session_scope(engine) as session:
+        await seed(session)
+
+    async with session_scope(engine) as session:
+        assert (await session.scalars(select(Plant))).all() == []
+        # Admin kullanıcı yine kurulur — panele girilebilmeli
+        assert (await session.scalars(select(User))).one().role == "admin"

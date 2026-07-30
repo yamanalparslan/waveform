@@ -79,22 +79,38 @@ def _parse_tescom_ts(value: str, tz: tzinfo) -> datetime | None:
 
 
 def normalize_tescom_devices(
-    vendor_plant_id: str, payload: list[dict[str, Any]], tz: tzinfo
+    default_plant_id: str,
+    payload: list[dict[str, Any]],
+    tz: tzinfo,
+    plant_id_by_factory: dict[str, str] | None = None,
 ) -> list[TelemetryPoint]:
     """Tescom `/api/v1/devices` yanıtını kanonik modele dönüştürür.
 
     Beklenen yapı (cihaz listesi)::
 
-        [{"slave_id": 1, "zaman": "2026-07-21 10:39:27.661885",
-          "guc": 124.73,      # AC güç, kW
-          "voltaj": 801.9,    # DC gerilim, V
-          "akim": 90.33,      # DC akım, A
-          "sicaklik": 52.6,   # °C
+        [{"fabrika_id": "uretim", "slave_id": 1,
+          "zaman": "2026-07-21 10:39:27.661885",
+          "guc": 124.73,              # AC güç, kW
+          "voltaj": 801.9,            # DC gerilim, V
+          "akim": 90.33,              # DC akım, A
+          "sicaklik": 52.6,           # °C
+          "gunluk_uretim_kwh": 22.0,  # gün başından beri üretim
           "hata_kodu": 0, "durum": "AKTIF"}]
+
+    **`fabrika_id` cihaz kimliğinin parçasıdır.** API'de `slave_id` yalnızca
+    fabrika içinde tekildir: hem `mekanik` hem `uretim` fabrikasında 1 numaralı
+    cihaz vardır. Yalnız `slave_id` kullanılırsa iki fabrikanın cihazı aynı
+    zaman serisine yazılır ve yakın zaman damgalarında biri diğerinin üzerine
+    yazarak veriyi yok eder. Bu yüzden her fabrika ayrı bir `vendor_plant_id`
+    (saha anahtarı) altına yazılır; eşleme `plant_id_by_factory` ile verilir.
+
+    `fabrika_id` içermeyen eski/kısmi yanıtlar `default_plant_id` altında
+    toplanır — geriye dönük uyumluluk için.
 
     Zaman damgası tz'siz yerel (fabrika saati) gelir; `tz` ile işaretlenip
     `TelemetryPoint` içinde UTC'ye çevrilir.
     """
+    mapping = plant_id_by_factory or {}
     points: list[TelemetryPoint] = []
     for item in payload:
         raw_ts = item.get("zaman") or item.get("son_zaman")
@@ -103,17 +119,22 @@ def normalize_tescom_devices(
         ts = _parse_tescom_ts(raw_ts, tz)
         if ts is None:
             continue
+        factory = item.get("fabrika_id")
+        factory_key = str(factory) if factory is not None else ""
         error_code = item.get("hata_kodu")
         points.append(
             TelemetryPoint(
                 vendor=Vendor.TESCOM,
-                vendor_plant_id=vendor_plant_id,
+                vendor_plant_id=mapping.get(factory_key, default_plant_id),
                 vendor_device_id=str(item["slave_id"]),
                 ts=ts,
                 ac_power_kw=_as_float(item.get("guc")),
                 dc_voltage_v=_as_float(item.get("voltaj")),
                 dc_current_a=_as_float(item.get("akim")),
                 temp_c=_as_float(item.get("sicaklik")),
+                # Gün başından beri üretilen enerji; saatlik/günlük agregatların
+                # tek kaynağı budur (eşlenmediği sürece enerji hep boş kalıyordu)
+                energy_total_kwh=_as_float(item.get("gunluk_uretim_kwh")),
                 error_code=str(error_code) if error_code is not None else None,
                 status=item.get("durum") if isinstance(item.get("durum"), str) else None,
             )

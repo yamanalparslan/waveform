@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from luminmind.core.models import (
 )
 from luminmind.core.schemas import Vendor
 from luminmind.core.security import encrypt_payload, hash_password
+from luminmind.twin.plant_model import MountType
 
 logger = logging.getLogger(__name__)
 
@@ -44,38 +46,13 @@ async def seed(session: AsyncSession) -> None:
         session.add(admin)
         logger.info("created admin user %s", admin.email)
 
-    await _seed_mock_plant(session, admin)
-    await _seed_tescom_plant(session, admin)
-
-
-async def _seed_tescom_plant(session: AsyncSession, admin: User) -> None:
-    """Tescom API yapılandırılmışsa İzmir tesisini Postgres'e ekler (idempotent).
-
-    Böylece gerçek üretim verisi arayüzde/haritada görünür ve (kapasite girildiyse)
-    dijital ikiz beklenen üretimi hesaplar. Depolama (BESS) tanımlanmaz — PV izleme.
-    """
-    settings = get_settings()
-    if not settings.tescom_base_url:
-        return
-    existing = (
-        await session.scalars(
-            select(Plant).where(Plant.vendor_plant_id == settings.tescom_plant_id)
-        )
-    ).one_or_none()
-    if existing is not None:
-        return
-    plant = Plant(
-        owner=admin,
-        name=settings.tescom_plant_name,
-        vendor=Vendor.TESCOM.value,
-        vendor_plant_id=settings.tescom_plant_id,
-        latitude=settings.tescom_latitude,
-        longitude=settings.tescom_longitude,
-        dc_capacity_kwp=settings.tescom_dc_capacity_kwp or None,
-        ac_capacity_kw=settings.tescom_dc_capacity_kwp or None,
-    )
-    session.add(plant)
-    logger.info("created Tescom plant %s", settings.tescom_plant_id)
+    # Demo tesis yalnızca mock modda kurulur. Gerçek üretici bağlıyken bunu
+    # koşulsuz yaratmak, kaldırılan demo tesisi her `init` çalıştırmasında geri
+    # getirirdi. Gerçek tesis/saha yapısı `scripts/bootstrap_sites.py`'nin işi.
+    if get_settings().lm_use_mock_vendors:
+        await _seed_mock_plant(session, admin)
+    else:
+        logger.info("gerçek üretici yapılandırılmış; demo tesis kurulmadı")
 
 
 async def _seed_mock_plant(session: AsyncSession, admin: User) -> None:
@@ -91,6 +68,9 @@ async def _seed_mock_plant(session: AsyncSession, admin: User) -> None:
             logger.info("seed already applied; nothing to do")
         return
 
+    # Gerçekçi bir saha: 1004 kWp DC / 800 kW AC → DC/AC ≈ 1,25. Bu oran önemli,
+    # çünkü invertör kırpması dijital ikizin öğlen tepesini belirler; DC=AC
+    # varsayımı ikizi gerçekte olmayan bir tepeye götürür.
     plant = Plant(
         owner=admin,
         name=_PLANT_NAME,
@@ -98,25 +78,36 @@ async def _seed_mock_plant(session: AsyncSession, admin: User) -> None:
         vendor_plant_id=_MOCK_PLANT_ID,
         latitude=37.87,
         longitude=32.48,
-        dc_capacity_kwp=1000.0,
-        ac_capacity_kw=1000.0,
+        altitude_m=1020.0,  # Konya ovası
+        dc_capacity_kwp=1004.0,
+        ac_capacity_kw=800.0,
+        grid_export_limit_kw=800.0,
+        commissioned_on=date(2021, 6, 1),
     )
     plant.inverters = [
         Inverter(
             vendor_device_id=f"{_MOCK_PLANT_ID}-inv-{i:02d}",
-            model="Mock String Inverter 250kW",
-            ac_capacity_kw=250.0,
+            model="Mock String Inverter 200kW",
+            ac_capacity_kw=200.0,
         )
         for i in range(1, 5)
     ]
+    # Her invertöre bir dizi: 25 × 18 × 550 W ≈ 247,5 kWp (toplam ≈ 990 kWp)
     plant.pv_arrays = [
         PvArray(
+            inverter=inverter,
             modules_per_string=25,
-            strings=73,  # 25 × 73 × 550 W ≈ 1004 kWp
+            strings=18,
             tilt_deg=25.0,
             azimuth_deg=180.0,
             module_params={"pdc0": 550.0, "gamma_pdc": -0.0035},
+            mount_type=MountType.FIXED_GROUND.value,
+            gcr=0.40,
+            albedo=0.20,
+            bifaciality=0.0,
+            module_type="monosi",
         )
+        for inverter in plant.inverters
     ]
     plant.batteries = [
         BatterySystem(

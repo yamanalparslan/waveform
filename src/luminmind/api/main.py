@@ -11,17 +11,25 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from luminmind.api.deps import TimeseriesSource, get_session
 from luminmind.api.routers import anomalies, auth, market, plants, timeseries
 from luminmind.api.schemas import HealthOut
 from luminmind.config import Settings, get_settings
 from luminmind.core.db import create_session_factory
+from luminmind.core.hardening import (
+    LoginRateLimiter,
+    SecurityHeadersMiddleware,
+    enforce_production_settings,
+)
 from luminmind.core.influx import InfluxStore
 from luminmind.web.routes import RequiresLogin
 from luminmind.web.routes import router as web_router
+from luminmind.web.theme import STATIC_DIR
 
 
 def create_app(
@@ -61,6 +69,9 @@ def create_app(
             if own_engine:
                 await app.state.engine.dispose()
 
+    # Güvensiz sırlarla üretimde açılmayı engelle (dev/test modunda uyarı yok)
+    enforce_production_settings(settings)
+
     app = FastAPI(
         title="LuminMind API",
         version="0.1.0",
@@ -69,6 +80,16 @@ def create_app(
         root_path="",
     )
     app.state.settings = settings
+    app.state.login_limiter = LoginRateLimiter(
+        max_attempts=settings.lm_login_max_attempts,
+        window_s=settings.lm_login_window_min * 60.0,
+    )
+
+    # HSTS yalnızca genel adres tanımlıyken anlamlı; yerel HTTP'de tarayıcıyı
+    # kalıcı olarak https'e kilitleyip geliştirmeyi bozar.
+    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_public)
+    if settings.allowed_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
     prefix = "/api/v1"
     app.include_router(auth.router, prefix=prefix)
@@ -77,6 +98,11 @@ def create_app(
     app.include_router(anomalies.router, prefix=prefix)
     app.include_router(market.router, prefix=prefix)
     app.include_router(web_router)
+
+    # Arayüz stilleri. Yol paketin içinden türetilir; `pyproject.toml`
+    # içindeki `package-data` girdisi olmadan tekerlek/imaj bu dizini taşımaz
+    # ve sayfa stilsiz açılır.
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.exception_handler(RequiresLogin)
     async def _redirect_to_login(request: Request, exc: RequiresLogin) -> Response:

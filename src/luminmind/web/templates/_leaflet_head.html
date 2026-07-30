@@ -1,0 +1,26 @@
+{#
+  Harita stilleri — `map.html` ve `overview.html` ortak kullanır.
+  Kopyalanmış olsaydı bir sayfadaki düzeltme diğerinde unutulurdu.
+  Leaflet stil dosyası harici; yüklenemezse `#map-error` bandı görünür.
+#}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  onerror="document.getElementById('map-error') &&
+    (document.getElementById('map-error').style.display='block')">
+<style>
+#map{height:{{ map_height or 460 }}px; border:1px solid var(--line);
+  border-radius:var(--r-md); background:var(--surface-3)}
+.leaflet-popup-content-wrapper{background:var(--surface); color:var(--text);
+  border:1px solid var(--line)}
+.leaflet-popup-content{font:14px/1.4 var(--sans); color:var(--text)}
+.leaflet-popup-content b{font-size:15px; color:var(--blue)}
+.leaflet-popup-tip{background:var(--surface)}
+.leaflet-container a{color:var(--blue)}
+.leaflet-control-attribution{background:var(--surface) !important;
+  color:var(--text-faint) !important}
+.leaflet-control-attribution a{color:var(--text-dim) !important}
+.site-label{background:var(--surface) !important; color:var(--text) !important;
+  border:1px solid var(--line) !important; box-shadow:var(--shadow-sm) !important;
+  font:600 12px var(--sans) !important; padding:2px 8px !important; border-radius:6px}
+.site-label::before{display:none}
+#map-error{display:none; padding:14px 18px; margin-bottom:12px}
+</style>

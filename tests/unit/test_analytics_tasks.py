@@ -52,6 +52,9 @@ class FakeSource:
     async def query_twin_window(self, start, stop):
         return {"mock-plant-1": {ts: 800.0 for ts in self._times()}}
 
+    async def query_twin_band_window(self, start, stop):
+        return {}  # tek modelli çalıştırma: belirsizlik bandı yok
+
 
 async def test_comparison_task_creates_soiling_event(engine):
     count = await run_comparison(SETTINGS, day=DAY, engine=engine, source=FakeSource())

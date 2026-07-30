@@ -4,6 +4,11 @@ Kural tabanlı + istatistiksel (medyan/MAD) yaklaşım. Etiketli gerçek arıza 
 olmadığından sonuçlar "şüphe" seviyesindedir (PLAN.md risk #8) — belirsizlik
 `severity` ve `evidence` alanlarıyla taşınır.
 
+Sapma ölçüsü olarak `DeviationSample.excess_deviation_pct` kullanılır: ensemble
+belirsizlik bandı varsa yalnızca bandın dışına taşan kısım. Band yokken ham
+sapmaya eşittir, yani tek modelli çalışmada davranış değişmez. Amaç, hava
+tahmini belirsizliğini santralin arızası gibi raporlamamaktır.
+
 Kurallar:
 - **Mikro çatlak:** pencere içinde ani, kalıcı basamak düşüş (öncesi sağlıklı,
   sonrası belirgin eksik üretim).
@@ -40,6 +45,8 @@ class ClassifierConfig:
     shading_min_days: int = 2  # bandın tekrar etmesi gereken gün sayısı
     soiling_min_loss_pct: float = 5.0  # kirlilik medyan kayıp eşiği
     soiling_uniform_mad_pct: float = 4.0  # üniformluk (MAD) eşiği
+    # Noktaların bu oranı belirsizlik bandının içindeyse pencere sağlıklı sayılır
+    band_healthy_fraction: float = 0.80
 
 
 @dataclass(frozen=True)
@@ -163,7 +170,15 @@ def classify_window(
     config = config or ClassifierConfig()
     if len(samples) < config.min_samples:
         return None
-    deviations = np.array([s.deviation_pct for s in samples])
+
+    banded = [s for s in samples if s.expected_p10_kw is not None]
+    if banded:
+        inside = sum(1 for s in banded if s.within_band)
+        if inside / len(banded) >= config.band_healthy_fraction:
+            # Sapmaların çoğu hava tahmini belirsizliğiyle açıklanıyor
+            return None
+
+    deviations = np.array([s.excess_deviation_pct for s in samples])
     for detector in (_detect_microcrack, _detect_shading, _detect_soiling):
         finding = detector(samples, deviations, config)
         if finding is not None:

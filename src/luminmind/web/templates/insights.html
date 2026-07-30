@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Aksiyon planı{% endblock %}
+{% block crumbs %}
+<a href="/ui">Portföy</a><span class="sep">›</span>
+<a href="{{ plant_url }}">{{ plant.name }}</a><span class="sep">›</span>
+<b>Aksiyon planı</b>{% if site %} · {{ site.name }}{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <h1 style="margin:0">Aksiyon planı</h1>
+  <span class="spacer"></span>
+  <form method="get" action="{{ plant_url }}/insights" class="row-inline" style="gap:8px">
+    {% if site_options %}
+    <select name="site" style="max-width:210px">
+      <option value="">Tüm fabrikalar</option>
+      {% for o in site_options %}
+      <option value="{{ o.code }}" {{ 'selected' if o.code == site_code }}>{{ o.name }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <input type="date" name="date" value="{{ day_str }}" style="max-width:170px">
+    <button>Göster</button>
+  </form>
+</div>
+
+<div class="money-hero">
+  <div class="figure">
+    <div class="cap">Potansiyel kurtarılabilir yıllık gelir</div>
+    <div class="amount">{{ recoverable.money }}</div>
+    <div class="note" style="margin-top:4px">
+      Yıllık beklenen üretimin %{{ recoverable.pct }}'i ·
+      {{ recoverable.kwh }} kWh · {{ recoverable.count }} bulgu
+    </div>
+    <div style="margin-top:14px">{{ recoverable.bar_svg | safe }}</div>
+    <div class="prio-legend">
+      {% for item in recoverable.legend %}
+      <span class="item">
+        <span class="dot" style="background:{{ item.color }}"></span>
+        {{ item.label }} <b>{{ item.money }}</b>
+        <span style="color:var(--text-faint)">({{ item.count }})</span>
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="donut">{{ recoverable.donut_svg | safe }}</div>
+</div>
+
+{% if unscoped_open and not site %}
+<div class="info">
+  {{ unscoped_open }} olayın fabrikası belirlenemiyor (göç öncesinde kaydedilmişler);
+  parasal etkileri 0 olarak gösteriliyor.
+</div>
+{% endif %}
+
+<h2>Bulgular — kurtarılabilir gelire göre</h2>
+<div class="card table-wrap">
+  <table>
+    <tr>
+      <th>Bulgu</th><th>Öncelik</th><th>Kanıt</th><th>Fabrika</th>
+      <th class="num">Kurtarılabilir</th><th class="num">%</th><th>Öneri</th><th></th>
+    </tr>
+    {% for i in insights %}
+    <tr>
+      <td>
+        <b>{{ i.title }}</b>
+        {% if i.device_id %}<div style="color:var(--text-faint); font-size:12px">
+          cihaz {{ i.device_id }}</div>{% endif %}
+      </td>
+      <td><span class="chip {{ i.priority_chip }}">{{ i.priority_label }}</span></td>
+      <td style="color:var(--text-dim); font-size:12.5px">{{ i.confidence_label }}</td>
+      <td style="color:var(--text-dim); font-size:12.5px">{{ i.site_name }}</td>
+      <td class="num money">{{ i.recoverable_try_year | try_money }}</td>
+      <td class="num">{{ i.recoverable_pct | tr_number(2) }}</td>
+      <td class="desc wrap">{{ i.recommendation }}</td>
+      <td class="num">
+        {% if i.event_id %}
+        <a class="btn small" href="/ui/anomalies/{{ i.event_id }}">Aç</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="empty">
+      Kurtarılabilir kayıp bulunamadı — bu kapsamda santral beklendiği gibi çalışıyor.
+    </td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<p class="note">
+  Yıllık tutar, günlük kaybın türüne göre bir kalıcılık katsayısıyla iskonto edilir:
+  acil bulgular yıl boyu sürer varsayılır (×1,0), orta vadeli mevsimseldir (×0,7),
+  uzun vadeli kayıplar (kirlilik gibi) kendiliğinden kısmen düzelir (×0,4).
+  Aynı kWh iki bulguya birden fatura edilmez — toplam, ölçülen kaybı aşamaz.
+</p>
+{% endblock %}

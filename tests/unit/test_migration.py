@@ -17,6 +17,8 @@ EXPECTED_TABLES = {
     "anomaly_events",
     "arbitrage_plans",
     "arbitrage_slots",
+    "twin_calibrations",
+    "sites",
 }
 
 

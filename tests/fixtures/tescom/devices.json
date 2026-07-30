@@ -1,5 +1,6 @@
 [
   {
+    "fabrika_id": "mekanik",
     "slave_id": 1,
     "son_zaman": "2026-07-21 10:39:27.661885",
     "zaman": "2026-07-21 10:39:27.661885",
@@ -7,17 +8,33 @@
     "voltaj": 801.9,
     "akim": 90.33,
     "sicaklik": 52.6,
+    "gunluk_uretim_kwh": 15.0,
     "hata_kodu": 0,
     "durum": "AKTIF"
   },
   {
+    "fabrika_id": "uretim",
+    "slave_id": 1,
+    "son_zaman": "2026-07-21 10:39:27.756523",
+    "zaman": "2026-07-21 10:39:27.756523",
+    "guc": 133.2,
+    "voltaj": 766.3,
+    "akim": 25.7,
+    "sicaklik": 43.0,
+    "gunluk_uretim_kwh": 22.0,
+    "hata_kodu": 0,
+    "durum": "AKTIF"
+  },
+  {
+    "fabrika_id": "uretim",
     "slave_id": 2,
-    "son_zaman": "2026-07-21 10:39:27.661885",
-    "zaman": "2026-07-21 10:39:27.661885",
+    "son_zaman": "2026-07-21 10:39:27.841689",
+    "zaman": "2026-07-21 10:39:27.841689",
     "guc": 118.4,
-    "voltaj": 796.2,
-    "akim": 86.1,
-    "sicaklik": 50.9,
+    "voltaj": 765.4,
+    "akim": 18.23,
+    "sicaklik": 43.1,
+    "gunluk_uretim_kwh": 12.0,
     "hata_kodu": 0,
     "durum": "AKTIF"
   }

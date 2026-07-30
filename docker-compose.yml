@@ -12,8 +12,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "5432:5432"
+    # Port yayınlanmaz: veritabanına yalnızca compose ağındaki servisler erişir.
+    # Dışarıdan bakmak için: docker compose exec postgres psql -U luminmind
+    # (Geliştirme aracıyla bağlanmak isterseniz compose.override ile
+    #  "127.0.0.1:5432:5432" ekleyin — asla "5432:5432" değil.)
 
   influxdb:
     image: influxdb:2.7-alpine
@@ -31,8 +33,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "8086:8086"
+    # Influx arayüzü admin token'ı taşır; internete açık makinede yayınlanmaz.
 
   redis:
     image: redis:7-alpine
@@ -41,13 +42,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "6379:6379"
+    # Redis'in kimlik doğrulaması yok; yayınlanırsa kuyruk herkese açılır.
 
   # Tek seferlik kurulum: migration + Influx bucket'ları + seed
   init:
     build: .
-    command: sh -c "alembic upgrade head && python -m luminmind.scripts.bootstrap_influx && python -m luminmind.scripts.seed"
+    # Sıra önemli: şema → Influx bucket'ları → admin/demo tohumu → saha yapısı.
+    # bootstrap_sites en sonda çünkü eski düz tesisleri emip sahalara bağlıyor.
+    command: >
+      sh -c "alembic upgrade head
+      && python -m luminmind.scripts.bootstrap_influx
+      && python -m luminmind.scripts.seed
+      && python -m luminmind.scripts.bootstrap_sites"
     env_file: .env
     environment:
       POSTGRES_DSN: postgresql+asyncpg://luminmind:${POSTGRES_PASSWORD:-changeme}@postgres:5432/luminmind
@@ -60,14 +66,21 @@ services:
 
   api:
     build: .
-    command: uvicorn luminmind.api.main:app --host 0.0.0.0 --port 8000
+    # --proxy-headers: tünel/ters vekil arkasında istemci IP'si ve şeması doğru
+    # okunsun (giriş hız sınırı gerçek IP'yi görmeli).
+    command: >
+      uvicorn luminmind.api.main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips=*
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
       POSTGRES_DSN: postgresql+asyncpg://luminmind:${POSTGRES_PASSWORD:-changeme}@postgres:5432/luminmind
       INFLUX_URL: http://influxdb:8086
     ports:
-      - "8000:8000"
+      # Yalnızca localhost'a bağlanır. Dış dünyaya açılış cloudflared üzerinden
+      # yapılır; bu satırı "8000:8000" yapmak paneli yerel ağın tamamına açar.
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,6 +88,23 @@ services:
         condition: service_healthy
       init:
         condition: service_completed_successfully
+
+  # Cloudflare Tunnel — sunucuda hiçbir port açmadan paneli alan adınıza bağlar.
+  # Bağlantı içeriden dışarıya kurulur; yönlendirme/DDNS/sertifika gerekmez.
+  # Etkinleştirmek için .env içine CLOUDFLARE_TUNNEL_TOKEN yazın:
+  #   docker compose --profile public up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      # `:?` zorunlu-değişken biçimi kullanılmaz: değişken yorumlaması profil
+      # aktif olmasa da çalışır ve token yokken sıradan `docker compose up`
+      # komutunu da kırardı. Token boşsa yalnızca bu servis başlatılamaz.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    profiles: ["public"]
+    restart: unless-stopped
+    depends_on:
+      - api
 
   worker:
     build: .
@@ -87,6 +117,7 @@ services:
     # host.docker.internal → host makinedeki Tescom API'sine (port 8503) erişim
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy
@@ -101,6 +132,7 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+    restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy

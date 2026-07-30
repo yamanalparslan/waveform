@@ -34,7 +34,6 @@ class UserOut(BaseModel):
     email: str
     role: str
 
-
 class InverterOut(BaseModel):
     id: uuid.UUID
     vendor_device_id: str

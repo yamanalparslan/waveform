@@ -1,32 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Giriş{% endblock %}
 {% block content_login %}
-<div style="max-width:400px; width:100%">
-  <div class="card pad" style="padding:30px 30px 26px">
-    <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px">
-      <span style="width:36px; height:36px; border-radius:10px;
-        background:conic-gradient(from 210deg, var(--amber), #b57a10, var(--amber));
-        display:grid; place-items:center; color:#231802; font-weight:700">◑</span>
-      <div>
-        <div style="font-size:20px; font-weight:700; letter-spacing:-.4px">
-          Lumin<b style="color:var(--amber)">Mind</b></div>
-        <div style="font-size:12px; color:var(--text-faint)">GES izleme & enerji arbitrajı</div>
-      </div>
-    </div>
-    {% if error %}<div class="error" style="margin-top:18px">{{ error }}</div>{% endif %}
-    <form method="post" action="/ui/login" style="margin-top:8px">
-      <label for="email">E-posta</label>
-      <input id="email" name="email" type="text" autocomplete="username" required>
-      <label for="password">Şifre</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <div style="margin-top:22px">
-        <button class="primary" style="width:100%; justify-content:center">Giriş yap</button>
-      </div>
-    </form>
-    <div class="note" style="margin-top:18px; text-align:center">
-      Demo giriş: <code style="color:var(--text-dim)">admin@luminmind.local</code> /
-      <code style="color:var(--text-dim)">admin</code>
+<div class="card pad" style="padding:30px 30px 26px">
+  <div class="row-inline" style="gap:12px; margin-bottom:4px">
+    <span class="mark" style="width:36px; height:36px; border-radius:10px;
+      background:var(--blue); display:grid; place-items:center;
+      color:var(--text-invert); font-weight:700; font-size:18px">◑</span>
+    <div>
+      <div style="font-family:var(--display); font-size:23px; font-weight:700;
+                  letter-spacing:-.028em">
+        Lumin<b style="color:var(--blue)">Mind</b></div>
+      <div style="font-size:13.5px; color:var(--text-dim)">Güneş santraliniz, tek ekranda</div>
     </div>
   </div>
+  {% if error %}<div class="error" style="margin-top:18px">{{ error }}</div>{% endif %}
+  <form method="post" action="/ui/login" style="margin-top:8px">
+    <label for="email">E-posta</label>
+    <input id="email" name="email" type="text" autocomplete="username" required>
+    <label for="password">Şifre</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <div style="margin-top:22px">
+      <button class="primary" style="width:100%; justify-content:center">Giriş yap</button>
+    </div>
+  </form>
 </div>
 {% endblock %}

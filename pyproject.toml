@@ -7,7 +7,7 @@ name = "luminmind"
 version = "0.1.0"
 description = "Cloud API-based solar plant monitoring, digital twin and BESS energy arbitrage platform"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "Proprietary" }
 dependencies = [
     "pydantic>=2.7",
@@ -43,10 +43,12 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-luminmind = ["py.typed", "web/templates/*.html"]
+# `web/static/*` olmadan tekerlek ve Docker imajı CSS'i taşımaz; sayfa
+# stilsiz açılır ve hata da vermez (404 yalnızca tarayıcı konsolunda görünür).
+luminmind = ["py.typed", "web/templates/*.html", "web/static/*"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
 
@@ -69,7 +71,7 @@ ignore = [
 "tests/**" = ["ANN"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 mypy_path = "src"
 packages = ["luminmind"]

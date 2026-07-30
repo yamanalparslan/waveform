@@ -1,0 +1,65 @@
+{#
+  Harita başlatma — `map.html` ve `overview.html` ortak kullanır.
+  `locations` / `locations_json` bağlamdan gelir.
+#}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  onerror="document.getElementById('map-error').style.display='block';
+    document.getElementById('map') && (document.getElementById('map').style.display='none')"></script>
+<script>
+(function(){
+  if (typeof L === 'undefined') {
+    // Leaflet yüklenemedi — hata bandını göster, sayfanın geri kalanı çalışsın
+    var el = document.getElementById('map-error');
+    if (el) el.style.display = 'block';
+    var m = document.getElementById('map');
+    if (m) m.style.display = 'none';
+    return;
+  }
+  const sites = {{ locations_json | safe }};
+  const map = L.map('map', {scrollWheelZoom: false}).setView([39.0, 35.2], 6);
+
+  // İki tile sağlayıcı: açık (CARTO Positron) tercih; erişilemezse standart OSM'e düş
+  const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    {attribution: '© OpenStreetMap © CARTO', maxZoom: 19, subdomains: 'abcd'});
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {attribution: '© OpenStreetMap', maxZoom: 19});
+  let tileErrors = 0;
+  light.on('tileerror', function(){
+    tileErrors++;
+    if (tileErrors === 3) {  // birkaç kare düşerse OSM'e geçelim
+      map.removeLayer(light);
+      osm.addTo(map);
+    }
+  });
+  light.addTo(map);
+
+  // Renkler paletten gelir (web/theme.py); CSS değişkeni SVG özniteliğinde
+  // güvenilir çalışmadığı için değer sunucuda gömülür.
+  const markers = [];
+  sites.forEach(function(s){
+    const m = L.circleMarker([s.lat, s.lon], {
+      radius: 9, color: '{{ palette["surface"] }}', weight: 2,
+      fillColor: '{{ palette["blue"] }}', fillOpacity: 1
+    }).addTo(map);
+    m.bindPopup(
+      '<b>' + s.name + '</b><br>' +
+      (s.capacity ? (s.capacity.toFixed(1) + ' kWp<br>') : '') +
+      'Konum: ' + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
+    );
+    m.bindTooltip(s.name, {permanent: true, direction: 'right', offset: [12, 0],
+      className: 'site-label'});
+    markers.push(m);
+  });
+  if (markers.length > 1) {
+    map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
+  } else if (markers.length === 1) {
+    map.setView([sites[0].lat, sites[0].lon], 11);
+  }
+
+  // Container boyutu geç oturursa Leaflet'in klasik "boş harita" tuzağını at:
+  // birkaç kez invalidateSize çağır; tarayıcı sekmesi arkaplandan dönerken de faydalı.
+  setTimeout(function(){ map.invalidateSize(); }, 100);
+  setTimeout(function(){ map.invalidateSize(); }, 500);
+  window.addEventListener('resize', function(){ map.invalidateSize(); });
+})();
+</script>

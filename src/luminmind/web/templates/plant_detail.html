@@ -1,103 +1,209 @@
 {% extends "base.html" %}
-{% block title %}{{ plant.name }}{% endblock %}
-{% block crumbs %}<a href="/ui">Genel Bakış</a> · <b>{{ plant.name }}</b>{% endblock %}
-{% block content %}
-<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap">
-  <div>
-    <h1>{{ plant.name }}</h1>
-    <p class="sub">
-      <span class="chip muted">{{ plant.vendor }}</span>
-      {% if plant.dc_capacity_kwp %}<span class="chip plain">{{ "%.1f"|format(plant.dc_capacity_kwp) }} kWp</span>{% endif %}
-      {% if plant.latitude %}<span class="chip plain">{{ "%.3f"|format(plant.latitude) }}, {{ "%.3f"|format(plant.longitude) }}</span>{% endif %}
-    </p>
-  </div>
-  {% if user.role == 'admin' %}
-  <a class="btn" href="/ui/tesisler/{{ plant.id }}/duzenle">✎ Düzenle</a>
-  {% endif %}
-</div>
+{% block title %}{{ page_title }}{% endblock %}
+{% block crumbs %}
+<a href="/ui">Portföy</a><span class="sep">›</span>
+{% if site %}<a href="{{ plant_url }}">{{ plant.name }}</a><span class="sep">›</span>
+<b>{{ site.name }}</b>{% else %}<b>{{ plant.name }}</b>{% endif %}
+{% endblock %}
 
+{% block tabs %}
+<div class="tabs">
+  <a href="{{ base_url }}?date={{ day_str }}"
+     class="{{ 'active' if tab != 'inverterler' }}">Durum</a>
+  <a href="{{ base_url }}?tab=inverterler&amp;date={{ day_str }}"
+     class="{{ 'active' if tab == 'inverterler' }}">İnvertörler
+     {% if inverter_rows %}<span style="opacity:.6">({{ inverter_rows|length }})</span>{% endif %}</a>
+</div>
+{% endblock %}
+
+{% block content %}
 <div class="toolbar">
-  <form method="get" class="row-inline">
-    <label for="date" style="margin:0; text-transform:none">Tarih</label>
-    <input id="date" type="date" name="date" value="{{ day_str }}">
-    <button class="primary">Göster</button>
+  <h1 style="margin:0">{{ site.name if site else plant.name }}</h1>
+  <span class="chip plain">{{ kpis.capacity }} kWp kurulu güç</span>
+  <span class="spacer"></span>
+  <form method="get" action="{{ base_url }}" class="row-inline" style="gap:8px">
+    {% if tab == 'inverterler' %}<input type="hidden" name="tab" value="inverterler">{% endif %}
+    <input type="date" name="date" value="{{ day_str }}" style="max-width:170px">
+    <button>Göster</button>
   </form>
 </div>
 
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
-  <div class="kpi accent-amber">
-    <div class="label">Tepe güç (gerçek)</div>
-    <div class="value">{{ kpis.peak_kw }}<small>kW</small></div>
-    <div class="trend">gün içi maksimum</div>
-  </div>
-  <div class="kpi accent-teal">
-    <div class="label">Günlük üretim</div>
-    <div class="value">{{ kpis.energy_kwh }}<small>kWh</small></div>
-    <div class="trend">15 dk toplamı</div>
+{% if unscoped_open %}
+<div class="info">
+  {{ unscoped_open }} olayın hangi fabrikaya ait olduğu belirlenemiyor (göç öncesinde
+  kaydedilmişler). Aksiyon planında görünürler ama parasal etkileri hesaplanamıyor.
+</div>
+{% endif %}
+
+{% if tab == 'inverterler' %}
+{# ------------------------------ İNVERTÖRLER ------------------------------ #}
+<div class="card table-wrap">
+  <table>
+    <tr>
+      <th>Cihaz</th>{% if not site %}<th>Fabrika</th>{% endif %}
+      <th>Durum</th><th class="num">Güç</th><th class="num">Sıcaklık</th>
+      <th>Hata / durum</th><th class="num">Son veri</th><th></th>
+    </tr>
+    {% for row in inverter_rows %}
+    <tr>
+      <td><b>{{ row.vendor_device_id }}</b></td>
+      {% if not site %}<td style="color:var(--text-dim)">{{ row.site_name or '—' }}</td>{% endif %}
+      <td><span class="chip {{ row.health_chip }}">{{ row.health_label }}</span></td>
+      <td class="num">{{ row.power }}</td>
+      <td class="num" style="color:{{ row.temp_color }}">{{ row.temp }}</td>
+      <td style="color:var(--text-dim)">{{ row.error_or_status }}</td>
+      <td class="num">{{ row.last_seen }}</td>
+      <td class="num">
+        {# Bağlantı fabrikaya sabitlenir: aynı numaralı cihaz iki fabrikada var #}
+        <a class="btn small" href="{{ plant_url }}{% if row.site_code %}/sites/{{ row.site_code }}{% endif %}/inverters/{{ row.vendor_device_id }}">Aç</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="empty">Henüz cihaz kaydı yok — ilk telemetri geldiğinde
+      cihazlar kendiliğinden listelenecek.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+<p class="note">
+  <a href="{{ plant_url }}/devices{% if site %}?site={{ site_code }}{% endif %}">
+    Cihazları aynı grafikte karşılaştır →</a>
+</p>
+
+{% else %}
+{# ------------------------------ DURUM ------------------------------ #}
+<div class="grid cards-4">
+  <div class="kpi accent-green">
+    <div class="label">Kazanç</div>
+    <div class="value">{{ kpis.money }}</div>
+    <div class="trend">{{ kpis.tariff_label }}</div>
   </div>
   <div class="kpi accent-blue">
-    <div class="label">Beklenen (ikiz)</div>
-    <div class="value">{{ kpis.expected_kwh }}<small>kWh</small></div>
-    <div class="trend">pvlib + hava</div>
+    <div class="label">Üretim</div>
+    <div class="value">{{ kpis.energy_kwh }}<small>kWh</small></div>
+    <div class="trend">olması gereken {{ kpis.expected_kwh }} kWh</div>
   </div>
-  <div class="kpi {{ 'accent-teal' if kpis.pr_ok else 'accent-coral' }}">
+  <div class="kpi accent-blue">
+    <div class="label">Tepe güç</div>
+    <div class="value">{{ kpis.peak_kw }}<small>kW</small></div>
+    <div class="trend">gün içindeki en yüksek değer</div>
+  </div>
+  <div class="kpi {{ 'accent-green' if kpis.pr_ok else 'accent-amber' }}">
     <div class="label">Performans oranı</div>
-    <div class="value">{{ kpis.pr }}<small>%</small></div>
-    <div class="trend {{ 'up' if kpis.pr_ok else 'down' }}">gerçek ÷ beklenen</div>
+    <div class="value">{{ kpis.pr }}{% if kpis.pr != '—' %}<small>%</small>{% endif %}</div>
+    <div class="trend">{{ kpis.pr_verdict }}</div>
   </div>
 </div>
 
-<h2>Üretim — gerçek vs beklenen</h2>
+<div class="split-2" style="margin-top:20px">
+  <div class="stack">
+    <div class="money-hero" style="margin-bottom:0">
+      <div class="figure">
+        <div class="cap">Potansiyel kurtarılabilir yıllık gelir</div>
+        <div class="amount">{{ recoverable.money }}</div>
+        <div class="note" style="margin-top:4px">
+          Yıllık beklenen üretimin %{{ recoverable.pct }}'i · {{ recoverable.count }} bulgu
+          {% if kpis.missed_try %}· bugün {{ kpis.missed_try }} kaçtı{% endif %}
+        </div>
+        <div style="margin-top:14px">{{ recoverable.bar_svg | safe }}</div>
+        <div class="prio-legend">
+          {% for item in recoverable.legend %}
+          <span class="item">
+            <span class="dot" style="background:{{ item.color }}"></span>
+            {{ item.label }} <b>{{ item.money }}</b>
+          </span>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="donut">{{ recoverable.donut_svg | safe }}</div>
+    </div>
+  </div>
+
+  {# Sağ kolonda yalnızca aksiyon planı ve batarya: grafikler ve tablolar
+     aşağıda tam genişlikte. Uzun yığını sola koymak sayfanın alt yarısında
+     sağda boş bir oluk bırakıyordu. #}
+  <div class="stack">
+    <div>
+      <h2 style="margin-top:0">Aksiyon planı</h2>
+      <div class="card">
+        {% for i in insights %}
+        <div class="insight prio-{{ i.priority }}">
+          <div class="insight-head">
+            <span class="chip {{ i.priority_chip }}">{{ i.priority_label }}</span>
+            <span class="insight-site">{{ i.confidence_label }}</span>
+            <span class="insight-money">{{ i.recoverable_try_year | try_money }}/yıl</span>
+          </div>
+          <div class="insight-title">{{ i.title }}</div>
+          <div class="insight-rec">{{ i.recommendation }}</div>
+        </div>
+        {% else %}
+        <div class="empty">Kurtarılabilir kayıp bulunamadı.</div>
+        {% endfor %}
+      </div>
+      <p class="note">
+        <a href="{{ plant_url }}/insights{% if site %}?site={{ site_code }}{% endif %}">
+          Tüm bulgular ve ROI tablosu →</a>
+      </p>
+    </div>
+
+    {% if batteries %}
+    <div>
+      <h2>Batarya</h2>
+      <div class="card pad">
+        {% for b in batteries %}
+        <div class="row-inline" style="justify-content:space-between">
+          <span style="font-size:13.5px; color:var(--text-dim)">{{ b.chemistry }}</span>
+          <span class="num">{{ b.rated_energy_kwh }} kWh / {{ b.rated_power_kw }} kW</span>
+        </div>
+        {% endfor %}
+        <p class="note"><a href="{{ plant_url }}/arbitrage">Günlük şarj planı →</a></p>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<h2>Gün içi üretim</h2>
 <div class="chart-wrap">{{ production_chart | safe }}</div>
 
-<h2>İnvertörler ({{ inverter_rows|length }})</h2>
-<div class="card">
-<table>
-  <tr>
-    <th>Cihaz</th>
-    <th>Durum</th>
-    <th style="text-align:right">Anlık güç</th>
-    <th style="text-align:right">Sıcaklık</th>
-    <th>Hata / Durum</th>
-    <th style="text-align:right">Son görülme</th>
-  </tr>
-  {% for r in inverter_rows %}
-  <tr onclick="window.location.href='/ui/plants/{{ plant.id }}/inverters/{{ r.vendor_device_id }}'"
-      style="cursor:pointer">
-    <td class="num"><a href="/ui/plants/{{ plant.id }}/inverters/{{ r.vendor_device_id }}"
-      style="color:var(--amber)">{{ r.vendor_device_id }}</a></td>
-    <td><span class="chip {{ r.health_chip }}">{{ r.health_label }}</span></td>
-    <td class="num" style="text-align:right">{{ r.power }}</td>
-    <td class="num" style="text-align:right; color:{{ r.temp_color }}">{{ r.temp }}</td>
-    <td>{{ r.error_or_status }}</td>
-    <td class="num" style="text-align:right; color:var(--text-faint)">{{ r.last_seen }}</td>
-  </tr>
-  {% else %}
-  <tr><td colspan="6">
-    <div class="note" style="padding:20px 0; text-align:center; margin:0">
-      Henüz cihaz görülmedi · ingestion çalıştıkça burada belirir
-    </div>
-  </td></tr>
-  {% endfor %}
-</table>
+{% if site_rows|length > 1 and not site %}
+<h2>Fabrikalar</h2>
+<div class="card table-wrap">
+  <table>
+          <tr>
+            <th>Fabrika</th><th class="num">Kurulu güç</th><th class="num">Üretim</th>
+            <th class="num">Beklenen</th><th class="num">Tepe</th><th class="num">PR</th><th></th>
+          </tr>
+          {% for r in site_rows %}
+          <tr>
+            <td><a href="{{ plant_url }}/sites/{{ r.code }}?date={{ day_str }}">{{ r.name }}</a>
+              {% if r.open_anomalies %}<span class="badge-count">{{ r.open_anomalies }}</span>{% endif %}
+            </td>
+            <td class="num">{{ r.capacity }} kWp</td>
+            <td class="num">{{ r.energy }} kWh</td>
+            <td class="num">{{ r.expected }} kWh</td>
+            <td class="num">{{ r.peak }} kW</td>
+            <td class="num"><span class="chip {{ r.pr_chip }}">{{ r.pr }}%</span></td>
+            <td class="num"><a class="btn small"
+              href="{{ plant_url }}/sites/{{ r.code }}?date={{ day_str }}">Aç</a></td>
+          </tr>
+    {% endfor %}
+  </table>
 </div>
+{% endif %}
 
-{% if batteries %}
-<h2>Batarya sistemi (BESS)</h2>
-<div class="grid cards-3">
-  {% for b in batteries %}
-  <div class="card pad">
-    <div style="display:flex; justify-content:space-between; align-items:center">
-      <span style="font-weight:600">{{ b.chemistry }}</span>
-      <span class="chip violet">{{ b.cells_series }}S{{ b.cells_parallel }}P</span>
-    </div>
-    <div class="mini-metrics" style="margin-top:14px">
-      <div><div class="k">Enerji</div><div class="v">{{ b.rated_energy_kwh }} kWh</div></div>
-      <div><div class="k">Güç</div><div class="v">{{ b.rated_power_kw }} kW</div></div>
-      <div><div class="k">Paket</div><div class="v">{{ b.pack_count }}</div></div>
-    </div>
-  </div>
+<h2>Cihaz × saat performansı</h2>
+<div class="chart-wrap">{{ heatmap_svg | safe }}</div>
+<div class="prio-legend" style="margin-top:10px">
+  {% for item in heatmap_legend %}
+  <span class="item"><span class="chip {{ item.chip }}">{{ item.label }}</span></span>
   {% endfor %}
 </div>
+<p class="note">
+  Cihaz beklentisi, sahanın hava durumuna göre beklenen üretiminin cihaz sayısına
+  eşit bölünmesiyle bulunur — üretici cihaz başına anma gücü vermiyor. Izgara
+  mutlak bir doğruluk değil, cihazlar arasındaki farkı görmek için.
+  <a href="{{ plant_url }}/heatmap{% if site %}?site={{ site_code }}{% endif %}">
+    Tam ekran →</a>
+</p>
 {% endif %}
 {% endblock %}

@@ -69,3 +69,42 @@ def test_daily_sums_energy_and_takes_peak_per_plant():
     assert daily.day_start == H0.replace(hour=0)
     assert daily.energy_kwh == 50.0  # (1030-1000) + (1080-1060)
     assert daily.peak_ac_power_kw == 140.0
+
+
+def test_daily_counter_reset_does_not_produce_negative_energy():
+    """Tescom `gunluk_uretim_kwh` gece yarısı sıfırlanır.
+
+    Düz fark alınırsa reset saatinde negatif enerji çıkar ve günlük toplamı
+    aşağı çeker. Reset saatindeki üretim, sıfırlama sonrası birikmiş değerdir.
+    """
+    base = datetime(2026, 7, 21, 23, 45, tzinfo=UTC)
+    samples = [
+        RawSample(ts=base, plant_id="p", inverter_id="1",
+                  fields={"energy_total_kwh": 18.4, "ac_power_kw": 0.0}),
+        RawSample(ts=base + timedelta(minutes=10), plant_id="p", inverter_id="1",
+                  fields={"energy_total_kwh": 18.4, "ac_power_kw": 0.0}),
+    ]
+    # Aynı saat içinde reset: 18.4 → 0.0 → 0.6
+    reset_hour = datetime(2026, 7, 22, 0, 0, tzinfo=UTC)
+    samples += [
+        RawSample(ts=reset_hour, plant_id="p", inverter_id="1",
+                  fields={"energy_total_kwh": 0.0, "ac_power_kw": 0.0}),
+        RawSample(ts=reset_hour + timedelta(minutes=30), plant_id="p", inverter_id="1",
+                  fields={"energy_total_kwh": 0.6, "ac_power_kw": 1.2}),
+    ]
+    hourly = {a.hour_start: a for a in aggregate_hourly(samples)}
+    assert hourly[reset_hour].energy_kwh == 0.6  # negatif değil
+    assert all(a.energy_kwh >= 0 for a in hourly.values())
+
+
+def test_cumulative_counter_behaviour_is_unchanged():
+    """Kümülatif sayaçta (Huawei/SMA) reset dalı hiç çalışmamalı."""
+    base = datetime(2026, 7, 21, 9, 0, tzinfo=UTC)
+    samples = [
+        RawSample(ts=base, plant_id="p", inverter_id="1",
+                  fields={"energy_total_kwh": 1000.0}),
+        RawSample(ts=base + timedelta(minutes=45), plant_id="p", inverter_id="1",
+                  fields={"energy_total_kwh": 1042.5}),
+    ]
+    [hourly] = aggregate_hourly(samples)
+    assert hourly.energy_kwh == 42.5

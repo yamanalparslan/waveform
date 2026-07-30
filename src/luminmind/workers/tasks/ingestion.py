@@ -7,7 +7,7 @@ loglanır; akışın geri kalanı aynıdır.
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -66,6 +66,7 @@ def build_adapters(settings: Settings) -> list[VendorAdapter]:
         )
     if settings.tescom_base_url:
         from luminmind.adapters import TescomAdapter
+        from luminmind.adapters.tescom import FactorySite
 
         adapters.append(
             TescomAdapter(
@@ -77,19 +78,34 @@ def build_adapters(settings: Settings) -> list[VendorAdapter]:
                 longitude=settings.tescom_longitude,
                 dc_capacity_kwp=settings.tescom_dc_capacity_kwp or None,
                 timezone=settings.tescom_timezone,
+                factories={
+                    factory_id: FactorySite(plant_id=key, name=name, dc_capacity_kwp=kwp)
+                    for factory_id, (key, name, kwp) in settings.tescom_factory_sites.items()
+                },
             )
         )
     return adapters
 
 
-async def ingest_adapter(adapter: VendorAdapter, since: datetime) -> list[TelemetryPoint]:
-    """Tek adaptörün tüm tesislerini çeker; tesis bazlı hatalar diğerlerini engellemez."""
+async def ingest_adapter(
+    adapter: VendorAdapter,
+    since: datetime,
+    since_by_plant: "Mapping[str, datetime] | None" = None,
+) -> list[TelemetryPoint]:
+    """Tek adaptörün tüm tesislerini çeker; tesis bazlı hatalar diğerlerini engellemez.
+
+    `since_by_plant` verilirse her tesis kendi son kaydından devam eder — bir
+    tesisin çekimi kesilmişken diğerlerini gereksiz yere geriye sarmamak için.
+    """
     collected: list[TelemetryPoint] = []
     async with adapter:
         plants = await adapter.fetch_plants()
         for plant in plants:
+            plant_since = (since_by_plant or {}).get(plant.vendor_plant_id, since)
             try:
-                points = await adapter.fetch_telemetry(plant.vendor_plant_id, since=since)
+                points = await adapter.fetch_telemetry(
+                    plant.vendor_plant_id, since=plant_since
+                )
             except Exception:
                 logger.exception(
                     "telemetry fetch failed vendor=%s plant=%s",
@@ -107,12 +123,44 @@ async def ingest_adapter(adapter: VendorAdapter, since: datetime) -> list[Teleme
     return collected
 
 
+async def _resume_points(
+    sink: TelemetrySink, settings: Settings, default_since: datetime
+) -> dict[str, datetime]:
+    """Seri anahtarı → çekimin devam edeceği an (deponun son kaydı).
+
+    Depoya sorulamıyorsa (LogSink, test fake'i) boş döner; çağıran varsayılan
+    pencereye düşer. Geriye sarma `ingestion_backfill_max_hours` ile sınırlı:
+    uzun bir duruştan sonra tek çevrimde onbinlerce nokta çekilmesin.
+    """
+    reader = getattr(sink, "last_sample_ts", None)
+    if reader is None:
+        return {}
+    horizon = datetime.now(tz=UTC) - timedelta(
+        hours=settings.ingestion_backfill_max_hours
+    )
+    try:
+        latest = await reader(lookback_hours=settings.ingestion_backfill_max_hours)
+    except Exception:
+        logger.exception("last sample lookup failed; falling back to fixed window")
+        return {}
+    return {
+        key: max(ts, horizon)
+        for key, ts in latest.items()
+        if max(ts, horizon) < default_since
+    }
+
+
 async def _ingest_to(sink: TelemetrySink, settings: Settings) -> int:
     since = datetime.now(tz=UTC) - timedelta(minutes=settings.ingestion_interval_minutes)
+    # Kaçırılan aralık: "şimdi eksi bir çevrim" varsayımı, çekim durduğunda
+    # (host uykusu, yeniden başlatma) aradaki veriyi bir daha hiç istemiyordu.
+    since_by_plant = await _resume_points(sink, settings, since)
+    if since_by_plant:
+        logger.info("resuming ingestion from last stored sample: %s", since_by_plant)
     total = 0
     all_points: list[TelemetryPoint] = []
     for adapter in build_adapters(settings):
-        points = await ingest_adapter(adapter, since=since)
+        points = await ingest_adapter(adapter, since=since, since_by_plant=since_by_plant)
         await sink.write_telemetry(points)
         total += len(points)
         all_points.extend(points)

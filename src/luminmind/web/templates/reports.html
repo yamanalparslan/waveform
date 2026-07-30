@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Raporlar{% endblock %}
-{% block crumbs %}<b>Raporlar</b>{% endblock %}
+{% block title %}Geçmiş &amp; Kazanç{% endblock %}
+{% block crumbs %}<b>Geçmiş &amp; Kazanç</b>{% endblock %}
 {% block content %}
-<h1>Raporlar</h1>
-<p class="sub">Portföy bazında günlük performans özeti · saatler TRT</p>
+<h1>Geçmiş &amp; Kazanç</h1>
+<p class="sub">Santrallerinizin son günlerde ne kadar ürettiği ve kazandırdığı</p>
 
 <div class="toolbar">
   <form method="get" class="row-inline">
@@ -17,63 +17,64 @@
       {{ range_start }} — {{ range_end }}</span>
   </form>
   <span style="flex:1"></span>
-  <a class="btn" href="/ui/raporlar/indir?days={{ days }}">⬇ CSV indir</a>
+  <a class="btn" href="/ui/raporlar/indir?days={{ days }}">⬇ Excel/CSV indir</a>
 </div>
 
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
-  <div class="kpi accent-teal">
-    <div class="label">Toplam üretim</div>
-    <div class="value">{{ summary.energy_kwh }}<small>kWh</small></div>
-    <div class="trend">seçili dönem</div>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+  <div class="kpi accent-green">
+    <div class="label">Dönem kazancınız</div>
+    <div class="value">{{ summary.money }}</div>
+    <div class="trend">{{ summary.energy_kwh }} kWh karşılığı</div>
   </div>
   <div class="kpi accent-amber">
-    <div class="label">Ortalama PR</div>
+    <div class="label">En iyi gününüz</div>
+    <div class="value" style="font-size:20px">{{ summary.best_day_money }}</div>
+    <div class="trend">{{ summary.best_day }}</div>
+  </div>
+  <div class="kpi {{ 'accent-green' if summary.avg_pr_ok else 'accent-red' }}">
+    <div class="label">Genel durum</div>
     <div class="value">{{ summary.avg_pr }}<small>%</small></div>
-    <div class="trend">performans oranı</div>
+    <div class="trend {{ 'up' if summary.avg_pr_ok else 'down' }}">{{ summary.avg_pr_verdict }}</div>
   </div>
-  <div class="kpi accent-blue">
-    <div class="label">Tepe güç</div>
-    <div class="value">{{ summary.peak_kw }}<small>kW</small></div>
-  </div>
-  <div class="kpi accent-coral">
-    <div class="label">Anomali (yeni)</div>
-    <div class="value">{{ summary.anomalies_new }}</div>
-    <div class="trend">dönem içi açıldı</div>
+  <div class="kpi accent-red">
+    <div class="label">Kaçırdığınız kazanç</div>
+    <div class="value" style="font-size:20px">{{ summary.missed_money or '—' }}</div>
+    <div class="trend">havanın elverdiğine göre</div>
   </div>
 </div>
 
-<h2>Günlük üretim eğrisi</h2>
+<h2>Günlük kazancınız</h2>
 <div class="chart-wrap">{{ energy_chart | safe }}</div>
 
-<h2>Günlük değerler</h2>
+<h2>Gün gün dökümü</h2>
 <div class="card">
 <table>
   <tr>
     <th>Tarih</th>
-    <th>Tesis</th>
+    <th>Santral</th>
+    <th style="text-align:right">Kazanç</th>
     <th style="text-align:right">Üretim (kWh)</th>
-    <th style="text-align:right">Beklenen (kWh)</th>
-    <th style="text-align:right">PR</th>
-    <th style="text-align:right">Tepe (kW)</th>
+    <th style="text-align:right">Olması gereken (kWh)</th>
+    <th style="text-align:right">Oran</th>
   </tr>
   {% for row in daily_rows %}
   <tr>
     <td class="num">{{ row.date }}</td>
     <td>{{ row.plant }}</td>
+    <td class="num" style="text-align:right; color:var(--green)">{{ row.money }}</td>
     <td class="num" style="text-align:right">{{ row.energy }}</td>
     <td class="num" style="text-align:right">{{ row.expected }}</td>
     <td class="num" style="text-align:right; color:{{ row.pr_color }}">{{ row.pr }}</td>
-    <td class="num" style="text-align:right">{{ row.peak }}</td>
   </tr>
   {% else %}
   <tr><td colspan="6">
     <div class="note" style="padding:24px 0; text-align:center; margin:0">
-      Seçili dönemde günlük agregasyon verisi yok · downsample görevi henüz çalışmamış olabilir
+      Bu dönem için henüz veri yok — santralden ölçüm gelmeye başlayınca burası dolacak
     </div>
   </td></tr>
   {% endfor %}
 </table>
 </div>
-<p class="note">Değerler nightly downsample görevi (00:30 UTC) tarafından üretilir.
-Rapor, `lm_daily` bucket'ından okunur; boşsa worker çalıştıktan sonra dolar.</p>
+<p class="note">"Olması gereken", o günkü güneş ve sıcaklık verisiyle santralinizin
+üretebileceği enerjidir. Oran ikisinin karşılaştırmasıdır: %85 üzeri normal sayılır.</p>
 {% endblock %}

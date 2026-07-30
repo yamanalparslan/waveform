@@ -6,6 +6,8 @@ from luminmind.core.models.plant import (
     Inverter,
     Plant,
     PvArray,
+    Site,
+    TwinCalibration,
     VendorCredential,
 )
 
@@ -18,6 +20,8 @@ __all__ = [
     "Inverter",
     "Plant",
     "PvArray",
+    "Site",
+    "TwinCalibration",
     "User",
     "VendorCredential",
 ]

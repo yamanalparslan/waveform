@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Cihazlar{% endblock %}
+{% block crumbs %}
+<a href="/ui">Portföy</a><span class="sep">›</span>
+<a href="{{ plant_url }}">{{ plant.name }}</a><span class="sep">›</span>
+<b>Cihazlar</b>{% if site %} · {{ site.name }}{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <h1 style="margin:0">Cihaz karşılaştırma</h1>
+  <span class="chip plain">{{ device_count }} cihaz</span>
+  <span class="spacer"></span>
+  <form method="get" action="{{ plant_url }}/devices" class="row-inline" style="gap:8px">
+    {% if site_options %}
+    <select name="site" style="max-width:210px">
+      <option value="">Tüm fabrikalar</option>
+      {% for o in site_options %}
+      <option value="{{ o.code }}" {{ 'selected' if o.code == site_code }}>{{ o.name }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <input type="date" name="date" value="{{ day_str }}" style="max-width:170px">
+    <button>Göster</button>
+  </form>
+</div>
+
+<h2>Güç</h2>
+<div class="chart-wrap">{{ power_chart | safe }}</div>
+<p class="note">
+  Düz çizgiler ölçüm, kesik çizgiler <b>cihaz başına beklenen güç</b> — sahanın
+  hava durumuna göre beklentisinin cihaz sayısına bölünmesiyle bulunur. Karşılaştırma
+  tabanı bilinçli olarak cihaz ölçeğinde: sahanın toplam beklentisi çizilseydi eksen
+  ona göre ölçeklenir, cihaz eğrileri dibe sıkışır ve sağlıklı bir cihaz üç kat
+  büyük bir çizginin yanında arızalı gibi görünürdü. Bir cihazın eğrisi
+  komşularından belirgin biçimde ayrılıyorsa sorun o cihazda, havada değil.
+</p>
+
+<h2>Sıcaklık</h2>
+<div class="chart-wrap">{{ temp_chart | safe }}</div>
+
+<h2>Cihaz durumu</h2>
+<div class="card table-wrap">
+  <table>
+    <tr>
+      <th>Cihaz</th>{% if not site %}<th>Fabrika</th>{% endif %}
+      <th>Durum</th><th class="num">Güç</th><th class="num">Sıcaklık</th>
+      <th>Hata / durum</th><th class="num">Son veri</th><th></th>
+    </tr>
+    {% for row in inverter_rows %}
+    <tr>
+      <td><b>{{ row.vendor_device_id }}</b></td>
+      {% if not site %}<td style="color:var(--text-dim)">{{ row.site_name or '—' }}</td>{% endif %}
+      <td><span class="chip {{ row.health_chip }}">{{ row.health_label }}</span></td>
+      <td class="num">{{ row.power }}</td>
+      <td class="num" style="color:{{ row.temp_color }}">{{ row.temp }}</td>
+      <td style="color:var(--text-dim)">{{ row.error_or_status }}</td>
+      <td class="num">{{ row.last_seen }}</td>
+      <td class="num">
+        <a class="btn small" href="{{ plant_url }}{% if row.site_code %}/sites/{{ row.site_code }}{% endif %}/inverters/{{ row.vendor_device_id }}">Aç</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="empty">Bu kapsamda cihaz yok.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

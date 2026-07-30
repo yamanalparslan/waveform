@@ -1,20 +1,22 @@
 {% extends "base.html" %}
-{% block title %}{{ kind_label }} · {{ plant.name }}{% endblock %}
+{% block title %}{{ task.title }} · {{ plant.name }}{% endblock %}
 {% block crumbs %}
-<a href="/ui">Genel Bakış</a> ·
+<a href="/ui">Bugün</a> ·
 <a href="/ui/plants/{{ plant.id }}">{{ plant.name }}</a> ·
-<a href="/ui/plants/{{ plant.id }}/anomalies">Anomaliler</a> ·
+<a href="/ui/plants/{{ plant.id }}/anomalies">Yapılacaklar</a> ·
 <b>{{ kind_label }}</b>
 {% endblock %}
 {% block content %}
 <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap">
   <div>
-    <h1>{{ kind_label }}</h1>
+    <h1>{{ task.title }}</h1>
     <p class="sub">
-      <span class="chip {{ severity_chip }}">{{ severity_label }}</span>
-      <span class="chip {{ status_chip }}">{{ status_label }}</span>
+      {% if event.status == 'open' %}
+      <span class="chip {{ task.urgency_chip }}">{{ task.urgency_label }}</span>
+      {% endif %}
+      <span class="chip {{ task.status_chip }}">{{ task.status_label }}</span>
       <span class="chip plain">{{ plant.name }}</span>
-      {% if device_id %}<span class="chip muted">Cihaz {{ device_id }}</span>{% endif %}
+      <span class="chip plain">{{ task.since_label }} sürüyor</span>
     </p>
   </div>
   <div class="row-inline">
@@ -22,53 +24,63 @@
     <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status">
       <input type="hidden" name="status" value="acked">
       <input type="hidden" name="back" value="/ui/anomalies/{{ event.id }}">
-      <button>Onayla</button>
+      <button>İlgileniyorum</button>
     </form>
     {% endif %}
     {% if event.status != 'resolved' %}
     <form class="inline" method="post" action="/ui/anomalies/{{ event.id }}/status">
       <input type="hidden" name="status" value="resolved">
       <input type="hidden" name="back" value="/ui/anomalies/{{ event.id }}">
-      <button class="primary">Çözüldü olarak işaretle</button>
+      <button class="primary">Halloldu</button>
     </form>
     {% endif %}
   </div>
 </div>
 
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
-  <div class="kpi accent-amber">
-    <div class="label">Sapma</div>
-    <div class="value" style="color:{{ deviation_color }}">
-      {{ "%.1f"|format(event.deviation_pct) }}<small>%</small></div>
+<div class="card pad" style="border-left:3px solid var(--blue)">
+  <div style="font-family:var(--display); font-size:16px; font-weight:650;
+              letter-spacing:-.014em">Ne yapmalısınız</div>
+  <div style="font-size:16px; margin-top:8px; line-height:1.6">{{ task.action }}</div>
+</div>
+
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); margin-top:16px">
+  <div class="kpi accent-red">
+    <div class="label">Size maliyeti</div>
+    <div class="value" style="font-size:22px">{{ task.impact }}</div>
+    <div class="trend">çözülene kadar her gün</div>
   </div>
   <div class="kpi accent-blue">
-    <div class="label">Başlangıç (TRT)</div>
+    <div class="label">Ne zaman başladı</div>
     <div class="value" style="font-size:18px">{{ started_local }}</div>
     <div class="trend">{{ time_ago }}</div>
   </div>
-  <div class="kpi accent-teal">
-    <div class="label">Süre</div>
+  <div class="kpi accent-green">
+    <div class="label">Ne kadardır sürüyor</div>
     <div class="value" style="font-size:18px">{{ duration_label }}</div>
-    <div class="trend">{{ 'devam ediyor' if not event.ended_at else 'çözüldü' }}</div>
+    <div class="trend">{{ 'devam ediyor' if not event.ended_at else 'sona erdi' }}</div>
   </div>
 </div>
 
-{% if evidence_rows %}
-<h2>Kanıt</h2>
-<div class="card">
-<table>
-  <tr><th>Alan</th><th>Değer</th></tr>
-  {% for k, v in evidence_rows %}
-  <tr><td>{{ k }}</td><td class="num">{{ v }}</td></tr>
-  {% endfor %}
-</table>
-</div>
+{% if chart %}
+<h2>Olay sırasında üretim</h2>
+<div class="chart-wrap">{{ chart | safe }}</div>
+<p class="note">{{ window_label }} arası — sorunun başladığı anın üç saat öncesi ve sonrası.</p>
 {% endif %}
 
-{% if chart %}
-<h2>Olay penceresi ({{ window_label }})</h2>
-<div class="chart-wrap">{{ chart | safe }}</div>
-<p class="note">Olayın başlangıcından ±3 saatlik pencere; kırmızı dikey çizgi olayın
-tetiklendiği anı gösterir.</p>
+{% if evidence_rows %}
+<details class="card pad" style="margin-top:22px">
+  <summary style="cursor:pointer; font-weight:620; font-size:15px">
+    Bunu neden tespit ettik?
+  </summary>
+  <p class="note" style="margin-top:12px">
+    Santralinizden gelen ölçümleri, o günkü hava koşullarında olması gereken üretimle
+    karşılaştırıyoruz. Bu kaydı oluşturan ham değerler:
+  </p>
+  <table style="margin-top:10px">
+    {% for k, v in evidence_rows %}
+    <tr><td style="color:var(--text-dim)">{{ k }}</td><td class="num">{{ v }}</td></tr>
+    {% endfor %}
+  </table>
+</details>
 {% endif %}
 {% endblock %}

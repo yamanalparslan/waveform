@@ -71,14 +71,30 @@ def aggregate_hourly(samples: list[RawSample]) -> list[HourlyAggregate]:
                     None if not ac_values else round(sum(ac_values) / len(ac_values), 4)
                 ),
                 ac_power_kw_max=None if not ac_values else max(ac_values),
-                energy_kwh=(
-                    None
-                    if len(energy_values) < 2
-                    else round(energy_values[-1] - energy_values[0], 4)
-                ),
+                energy_kwh=_energy_delta(energy_values),
             )
         )
     return aggregates
+
+
+def _energy_delta(energy_values: list[float]) -> float | None:
+    """Sayaç okumalarından saat içi üretimi çıkarır; sayaç sıfırlanmasına dayanıklı.
+
+    Üreticiler iki tür sayaç verir: kümülatif (Huawei/SMA, hiç sıfırlanmaz) ve
+    **günlük** (Tescom `gunluk_uretim_kwh`, gece yarısı sıfırlanır). Düz fark
+    almak günlük sayaçta reset saatinde negatif değer üretir (ör. 18,4 → 0,0 =
+    −18,4 kWh) ve günlük toplamı bozar.
+
+    Son okuma ilkinden küçükse pencere içinde reset olmuş demektir; o saatteki
+    üretim reset sonrası birikmiş değer kadardır. Kümülatif sayaçlarda bu dal
+    hiç çalışmaz, davranış değişmez.
+    """
+    if len(energy_values) < 2:
+        return None
+    delta = energy_values[-1] - energy_values[0]
+    if delta < 0:
+        delta = energy_values[-1]
+    return round(delta, 4)
 
 
 def aggregate_daily(hourly: list[HourlyAggregate]) -> list[DailyAggregate]:

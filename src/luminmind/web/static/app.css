@@ -1,0 +1,451 @@
+/* LuminMind arayüz stilleri — açık tema, lacivert kenar çubuğu.
+ *
+ * Bu dosya renk **kodu** içermez; yalnızca `var(--token)` kullanır. Paletin
+ * tamamı `web/theme.py`'deki `PALETTE` sözlüğünde durur ve `base.html` içine
+ * `:root{…}` bloğu olarak gömülür. Böylece aynı mavi hem bu dosyada hem
+ * sunucuda üretilen SVG grafiklerde tek yerden gelir.
+ *
+ * `tests/unit/test_theme.py` buradaki her `var(--token)`'ın palette tanımlı
+ * olduğunu doğrular: tanımsız bir değişken hata vermez, sessizce renksiz
+ * render edilir — testin varlık sebebi bu.
+ */
+
+/* ---------------- yüz dosyaları ----------------
+ * Inter, SF Pro'nun yayınlanabilen karşılığı; hangi durumda hangisinin geldiği
+ * `theme.py`'deki `sans`/`display` tokenlarının başında anlatılıyor.
+ *
+ * Tek dosya 100–900 arası bütün kalınlıkları taşıyor (değişken eksen), yani
+ * kalın başlık için ikinci bir istek yok. İki alt küme var çünkü Türkçe iki
+ * bloğa yayılıyor: ı U+0131 `latin`, İ/ğ/ş U+0130/011F/015F `latin-ext`, ₺
+ * U+20BA yine `latin-ext`. Tarayıcı sayfadaki karaktere göre yalnızca gerekeni
+ * indirir. `swap`: yüz inene kadar metin görünmez kalmaz, Segoe UI ile yazılır.
+ */
+@font-face{
+  font-family:Inter; font-style:normal; font-weight:100 900; font-display:swap;
+  src:url("/static/inter-latin-wght-normal.woff2") format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,
+    U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,
+    U+FEFF,U+FFFD;
+}
+@font-face{
+  font-family:Inter; font-style:normal; font-weight:100 900; font-display:swap;
+  src:url("/static/inter-latin-ext-wght-normal.woff2") format("woff2");
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,
+    U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,
+    U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+*{box-sizing:border-box; margin:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font:400 15.5px/1.6 var(--sans);
+  /* Inter ve SF geniş çizilir; hafif negatif aralık ikisini de toparlar. */
+  letter-spacing:-.009em;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  text-rendering:optimizeLegibility;
+}
+a{color:var(--blue); text-decoration:none}
+a:hover{text-decoration:underline}
+code,kbd,samp,pre{font-family:var(--mono); font-size:.92em}
+
+/* Sayı gövdeleri daktilo yüzünden değil, metnin kendi yüzünün sabit genişlikli
+ * rakamlarından geliyor (`tabular-nums`): kolonlar yine hizalanır, ama 27–38 px
+ * göstergeler sayfanın geri kalanıyla aynı aileden okunur — Apple'ın kendi
+ * gösterge tasarımındaki yol. */
+.num{
+  font-family:var(--display); font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1; letter-spacing:-.02em;
+}
+
+/* ---------------- form öğeleri ---------------- */
+button,.btn{
+  font:590 13.5px var(--sans); letter-spacing:-.006em;
+  background:var(--surface); color:var(--text);
+  border:1px solid var(--line); padding:8px 14px; border-radius:var(--r-sm);
+  cursor:pointer; transition:.15s; display:inline-flex; align-items:center; gap:8px;
+  box-shadow:var(--shadow-sm);
+}
+button:hover,.btn:hover{background:var(--surface-3); border-color:var(--slate)}
+button.primary{background:var(--blue); color:var(--text-invert); border-color:transparent}
+button.primary:hover{background:var(--nav); border-color:transparent}
+button.danger{background:var(--red); color:var(--text-invert); border-color:transparent}
+button.ghost{background:transparent; box-shadow:none}
+button.small,.btn.small{padding:5px 10px; font-size:12px}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{
+  outline:2px solid var(--blue); outline-offset:2px
+}
+input,select,textarea{
+  background:var(--surface); border:1px solid var(--line); color:var(--text);
+  padding:9px 12px; border-radius:var(--r-sm); font:400 14.5px var(--sans); width:100%;
+}
+/* Etiketler büyük harf + 11.5 px iken okunmuyordu; alan adı cümle düzeninde ve
+ * gövdeye yakın boyutta daha hızlı taranıyor. */
+label{
+  display:block; font-size:13px; color:var(--text-dim); margin:15px 0 6px;
+  letter-spacing:-.004em; font-weight:590;
+}
+form.inline{display:inline}
+
+/* ---------------- uygulama iskeleti ---------------- */
+.app{display:grid; grid-template-columns:248px 1fr; min-height:100vh}
+aside{
+  background:linear-gradient(180deg, var(--nav) 0%, var(--nav-2) 100%);
+  padding:18px 12px; position:sticky; top:0; height:100vh; overflow-y:auto;
+}
+.brand{
+  display:flex; align-items:center; gap:10px; padding:6px 10px 20px;
+  font-family:var(--display); font-weight:700; font-size:18.5px;
+  letter-spacing:-.028em; color:var(--nav-text-strong);
+}
+.brand .mark{
+  width:28px; height:28px; border-radius:9px; background:var(--blue);
+  display:grid; place-items:center; color:var(--text-invert); font-size:15px;
+}
+nav.side{display:flex; flex-direction:column; gap:1px}
+nav.side a{
+  display:flex; align-items:center; gap:11px; color:var(--nav-text);
+  padding:9px 12px; border-radius:var(--r-sm); font-size:14px; font-weight:450;
+  letter-spacing:-.006em; transition:.15s;
+}
+nav.side a:hover{background:var(--nav-hover); color:var(--nav-text-strong); text-decoration:none}
+nav.side a.active{background:var(--nav-active); color:var(--nav-text-strong); font-weight:600}
+nav.side a.plant-link{font-weight:600; color:var(--nav-text-strong)}
+nav.side a .label{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+nav.side a.sub{padding-left:34px; font-size:13.5px}
+nav.side a.sub2{padding-left:48px; font-size:13px}
+nav.side .icn{width:16px; text-align:center; opacity:.9; font-size:13px}
+nav.side .divider{height:1px; background:var(--nav-line); margin:12px 6px}
+nav.side .section-label{
+  font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--nav-text); opacity:.8; padding:10px 12px 5px; font-weight:700;
+}
+/* İçerik pencereyi doldurur. Önceki 1360 px sınırı 1600+ px ekranlarda sağda
+ * geniş bir ölü şerit bırakıyordu — panel bir metin sayfası değil, gösterge
+ * tablosu; boş kalan yer bilgiye dönüşmeli. Üst sınır yalnızca ultra geniş
+ * ekranlarda (3440 px) grafiklerin ve KPI ızgarasının saçmalamasını engellemek
+ * için var. Satır uzunluğu ayrıca korunuyor: düz metin blokları (`.sub`,
+ * `.note`) kendi `max-width:78ch` sınırını taşıyor. */
+main{padding:22px 30px 56px; max-width:2000px; width:100%}
+
+/* ---------------- üst şerit ---------------- */
+.topbar{display:flex; align-items:center; gap:16px; margin-bottom:18px; flex-wrap:wrap}
+.crumbs{color:var(--text-faint); font-size:13.5px}
+.crumbs a{color:var(--text-dim)}
+.crumbs b{color:var(--text); font-weight:620}
+.crumbs .sep{margin:0 7px; opacity:.6}
+.spacer{flex:1}
+.userchip{
+  display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:13.5px;
+  background:var(--surface); border:1px solid var(--line); border-radius:20px;
+  padding:4px 4px 4px 12px; box-shadow:var(--shadow-sm);
+}
+.userchip form button{padding:5px 12px; border-radius:14px; font-size:12px; box-shadow:none}
+.avatar{
+  width:26px; height:26px; border-radius:50%; background:var(--nav);
+  display:grid; place-items:center; color:var(--text-invert); font-weight:700; font-size:12px;
+}
+
+/* ---------------- başlıklar ----------------
+ * Ölçek gövdeden belirgin biçimde ayrılıyor: 30 / 19 / 16 px. Önceki hâlde h2
+ * 11 px büyük harf ve `--text-faint` idi — bir başlıktan çok bir dipnot gibi
+ * duruyor, sayfayı gözle bölümlere ayırmıyordu. Artık bölüm adı gövde metninden
+ * büyük, koyu ve sıkı aralıklı; yanındaki ince çizgi bölme işini sürdürüyor.
+ * Negatif harf aralığı puntoyla büyür (Apple'ın optik kesimlerindeki davranış).
+ */
+h1{
+  font-family:var(--display); font-size:30px; line-height:1.12; font-weight:700;
+  letter-spacing:-.026em; margin-bottom:6px; text-wrap:balance;
+}
+.sub{color:var(--text-dim); font-size:15px; line-height:1.55; margin-bottom:22px; max-width:78ch}
+h2{
+  font-family:var(--display); font-size:19px; font-weight:650; letter-spacing:-.018em;
+  color:var(--text); margin:34px 0 14px; display:flex; align-items:center; gap:14px;
+}
+h2::after{content:""; flex:1; height:1px; background:var(--line)}
+h3{
+  font-family:var(--display); font-size:16px; font-weight:650;
+  letter-spacing:-.014em; margin-bottom:8px;
+}
+
+/* ---------------- sekme şeridi ---------------- */
+.tabs{
+  display:flex; gap:2px; border-bottom:1px solid var(--line); margin-bottom:20px;
+  overflow-x:auto;
+}
+/* Büyük harf + 12 px sekmeler dar ekranda okunmuyordu; cümle düzeni ve 14 px. */
+.tabs a{
+  padding:10px 15px; font-size:14px; font-weight:590; letter-spacing:-.006em;
+  color:var(--text-dim); border-bottom:2px solid transparent; white-space:nowrap;
+}
+.tabs a:hover{color:var(--text); text-decoration:none}
+.tabs a.active{color:var(--blue); border-bottom-color:var(--blue); font-weight:650}
+
+/* ---------------- kartlar ve ızgaralar ---------------- */
+.card{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+  overflow:hidden; box-shadow:var(--shadow-sm);
+}
+.card.pad{padding:18px 20px}
+.card-head{
+  padding:14px 20px; border-bottom:1px solid var(--line-soft);
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+}
+.card-head h3{margin:0}
+.card-head .spacer{flex:1}
+.card.hoverable{transition:.18s}
+.card.hoverable:hover{border-color:var(--slate); box-shadow:var(--shadow-md)}
+.grid{display:grid; gap:14px}
+.grid.cards-4{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.grid.cards-3{grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
+.grid.cards-2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+/* İki kolonlu şerit yalnızca **benzer yükseklikte** iki blok için. Uzun bir
+ * yığını sola, tek kısa kartı sağa koymak sayfanın alt yarısında boş bir oluk
+ * bırakıyordu; grafikler ve tablolar tam genişlik olmalı. `align-items:start`
+ * kısa kartın gereksiz uzamasını engeller. */
+.split-2{display:grid; grid-template-columns:1.6fr 1fr; gap:16px; align-items:start}
+.split-even{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start}
+
+/* ---------------- KPI ---------------- */
+.kpi{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:15px 17px; box-shadow:var(--shadow-sm);
+}
+.kpi .label{
+  color:var(--text-dim); font-size:13px; font-weight:590; letter-spacing:-.004em;
+}
+.kpi .value{
+  font-family:var(--display); font-size:30px; margin-top:5px; font-weight:700;
+  letter-spacing:-.032em; line-height:1.1;
+  font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;
+}
+/* Birim, sayının optik kesimini değil gövde kesimini kullanır: 14 px'te SF Pro
+ * Text, Display'den daha açık okunur. */
+.kpi .value small{
+  font-family:var(--sans); font-size:14px; font-weight:590; color:var(--text-dim);
+  margin-left:5px; letter-spacing:-.006em;
+}
+.kpi .trend{font-size:13px; color:var(--text-faint); margin-top:5px}
+.kpi .trend.up{color:var(--green)}
+.kpi .trend.down{color:var(--red)}
+.kpi.accent-blue{border-top:3px solid var(--blue)}
+.kpi.accent-green{border-top:3px solid var(--green)}
+.kpi.accent-amber{border-top:3px solid var(--amber)}
+.kpi.accent-red{border-top:3px solid var(--red)}
+
+/* ---------------- kurtarılabilir gelir başlığı ---------------- */
+.money-hero{
+  display:flex; align-items:center; gap:26px; padding:20px 24px; flex-wrap:wrap;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-lg);
+  box-shadow:var(--shadow-sm); margin-bottom:16px;
+}
+.money-hero .figure{flex:1; min-width:230px}
+.money-hero .cap{
+  font-size:13.5px; color:var(--text-dim); font-weight:590; letter-spacing:-.006em;
+}
+.money-hero .amount{
+  font-family:var(--display); font-size:44px; font-weight:700;
+  letter-spacing:-.038em; line-height:1.05; margin-top:4px;
+  font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1; color:var(--blue);
+}
+.money-hero .note{margin-top:6px}
+.money-hero .donut{width:118px; flex:0 0 auto}
+
+/* öncelik kırılım barı — geometri SVG'de (charts.stacked_bar), boyut burada */
+.stacked-bar{
+  display:block; width:100%; height:10px; border-radius:6px;
+  background:var(--surface-3); overflow:hidden;
+}
+.prio-legend{display:flex; gap:16px; flex-wrap:wrap; margin-top:10px; font-size:13.5px}
+.prio-legend .item{display:flex; align-items:center; gap:7px; color:var(--text-dim)}
+.prio-legend .dot{width:9px; height:9px; border-radius:3px; flex:0 0 auto}
+.prio-legend b{color:var(--text); font-variant-numeric:tabular-nums; font-weight:650}
+
+/* ---------------- durum bandı ---------------- */
+.headline{
+  display:flex; gap:14px; align-items:flex-start; padding:16px 20px;
+  border-radius:var(--r-lg); border:1px solid var(--line); background:var(--surface);
+  margin-bottom:18px; box-shadow:var(--shadow-sm);
+}
+.headline .headline-dot{
+  width:10px; height:10px; border-radius:50%; margin-top:7px; flex:0 0 auto;
+  background:var(--slate);
+}
+.headline-title{
+  font-family:var(--display); font-size:19px; font-weight:650; letter-spacing:-.018em;
+}
+.headline-detail{color:var(--text-dim); font-size:14.5px; line-height:1.5; margin-top:4px}
+.headline.ok{border-color:var(--green-line)}
+.headline.ok .headline-dot{background:var(--green)}
+.headline.warn{border-color:var(--amber-line)}
+.headline.warn .headline-dot{background:var(--amber)}
+.headline.crit{border-color:var(--red-line)}
+.headline.crit .headline-dot{background:var(--red)}
+.headline.info{border-color:var(--blue-line)}
+.headline.info .headline-dot{background:var(--blue)}
+
+/* ---------------- aksiyon / insight kalemleri ---------------- */
+.insight{
+  display:block; padding:14px 18px; border-bottom:1px solid var(--line-soft);
+  color:inherit; transition:.15s;
+}
+.insight:last-child{border-bottom:0}
+.insight:hover{background:var(--surface-2); text-decoration:none}
+.insight-head{display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap}
+.insight-title{
+  font-family:var(--display); font-weight:620; font-size:15.5px;
+  letter-spacing:-.012em; line-height:1.4;
+}
+.insight-money{
+  font-family:var(--display); font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1; font-weight:700; letter-spacing:-.02em;
+  font-size:15px; color:var(--blue); margin-left:auto; white-space:nowrap;
+}
+.insight-site{font-size:13px; color:var(--text-faint)}
+.insight-rec{
+  color:var(--text-dim); font-size:14px; margin-top:7px; line-height:1.55;
+  padding-left:12px; border-left:2px solid var(--line);
+}
+.insight.prio-immediate{box-shadow:inset 3px 0 0 var(--red)}
+.insight.prio-mid{box-shadow:inset 3px 0 0 var(--amber)}
+.insight.prio-long{box-shadow:inset 3px 0 0 var(--yellow)}
+
+/* eski "yapılacak iş" kartı — anomali sayfaları hâlâ kullanıyor */
+.task{
+  display:block; padding:14px 18px; border-bottom:1px solid var(--line-soft);
+  color:inherit; transition:.15s;
+}
+.task:last-child{border-bottom:0}
+.task:hover{background:var(--surface-2); text-decoration:none}
+.task-head{display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap}
+.task-since{font-size:13px; color:var(--text-faint); font-variant-numeric:tabular-nums}
+.task-title{
+  font-family:var(--display); font-weight:620; font-size:15.5px;
+  letter-spacing:-.012em; line-height:1.4;
+}
+.task-impact{color:var(--red); font-size:14px; margin-top:5px; font-weight:590}
+.task-action{
+  color:var(--text-dim); font-size:14px; margin-top:7px; line-height:1.55;
+  padding-left:12px; border-left:2px solid var(--line);
+}
+.task.done .task-impact{color:var(--text-faint); font-weight:400}
+
+/* ---------------- çipler ---------------- */
+.chip{
+  display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:20px;
+  font-size:12.5px; font-weight:620; letter-spacing:-.004em; white-space:nowrap;
+}
+.chip::before{content:""; width:6px; height:6px; border-radius:50%; background:currentColor}
+.chip.ok{background:var(--green-soft); color:var(--green)}
+.chip.warn{background:var(--amber-soft); color:var(--amber)}
+.chip.crit{background:var(--red-soft); color:var(--red)}
+.chip.info{background:var(--blue-soft); color:var(--blue)}
+.chip.muted{background:var(--surface-3); color:var(--text-dim)}
+.chip.violet{background:var(--violet-soft); color:var(--violet)}
+.chip.plain{background:transparent; padding:2px 0; color:var(--text-dim)}
+.chip.plain::before{display:none}
+.badge-count{
+  display:inline-block; min-width:20px; padding:1px 6px; border-radius:10px; text-align:center;
+  font-size:11.5px; background:var(--red); color:var(--text-invert); font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
+
+/* ---------------- tablolar ---------------- */
+.table-wrap{overflow-x:auto}
+table{width:100%; border-collapse:collapse; font-size:14.5px}
+th,td{text-align:left; padding:11px 16px; border-bottom:1px solid var(--line-soft)}
+tr:last-child td{border-bottom:0}
+/* 10.5 px büyük harf + en soluk gri, kolon adlarını neredeyse görünmez yapıyordu. */
+th{
+  color:var(--text-dim); font-weight:620; font-size:13px; letter-spacing:-.004em;
+  background:var(--surface-2); white-space:nowrap;
+}
+tbody tr:hover td{background:var(--surface-2)}
+td.num,th.num{
+  font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;
+  letter-spacing:-.012em; text-align:right;
+}
+td.money{color:var(--blue); font-weight:650}
+td.desc{color:var(--text-dim); font-size:14px; max-width:340px}
+td.wrap{white-space:normal}
+
+/* ---------------- grafikler ---------------- */
+.chart-wrap{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:12px; overflow-x:auto;
+}
+.chart-wrap svg{width:100%; height:auto; min-width:620px; display:block}
+.chart-wrap.narrow svg{min-width:0}
+.chart .grid{stroke:var(--line); stroke-width:1}
+/* Eksen sayıları: sabit genişlikli rakam hizayı korur, yüz sayfayla aynı kalır. */
+.chart .tick{
+  fill:var(--text-faint); font-size:11.5px; font-family:var(--sans);
+  font-variant-numeric:tabular-nums;
+}
+.chart .unit{fill:var(--text-dim); font-weight:600; font-family:var(--sans)}
+.chart .label{fill:var(--text-dim); font-size:12px; font-family:var(--sans)}
+.chart-empty{fill:var(--text-faint); font-size:14px}
+.spark{margin-top:10px; height:44px; width:100%}
+
+/* ısı haritası hücreleri SVG içinde renklenir; kenarlık burada */
+.heat rect{stroke:var(--surface); stroke-width:1}
+.heat text{
+  font-family:var(--sans); font-variant-numeric:tabular-nums; font-size:11px;
+  fill:var(--text-faint);
+}
+
+/* ---------------- yardımcılar ---------------- */
+.toolbar{display:flex; gap:10px; align-items:center; margin-bottom:14px; flex-wrap:wrap}
+.toolbar input,.toolbar select{width:auto; max-width:220px}
+.pill-date{
+  background:var(--surface); border:1px solid var(--line); border-radius:20px;
+  padding:6px 14px; font-size:13.5px; color:var(--text-dim); font-weight:520;
+  font-variant-numeric:tabular-nums;
+}
+.note{
+  color:var(--text-faint); font-size:13.5px; margin-top:10px; line-height:1.6;
+  max-width:78ch;
+}
+.row-inline{display:flex; gap:14px; align-items:center; flex-wrap:wrap}
+.stack{display:flex; flex-direction:column; gap:14px}
+.empty{
+  padding:28px 20px; text-align:center; color:var(--text-faint); font-size:14.5px;
+}
+.error,.info,.success{
+  padding:11px 14px; border-radius:var(--r-sm); margin-bottom:14px; font-size:14.5px;
+  font-weight:500;
+}
+.error{background:var(--red-soft); color:var(--red); border:1px solid var(--red-line)}
+.info{background:var(--blue-soft); color:var(--blue); border:1px solid var(--blue-line)}
+.success{background:var(--green-soft); color:var(--green); border:1px solid var(--green-line)}
+
+.mini-metrics{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:8px}
+.mini-metrics .k{
+  font-size:12.5px; color:var(--text-dim); letter-spacing:-.004em; font-weight:560;
+}
+.mini-metrics .v{
+  font-family:var(--display); font-size:18px; font-weight:680; letter-spacing:-.022em;
+  font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1; margin-top:2px;
+}
+
+/* ---------------- giriş sayfası ---------------- */
+body.centered{
+  display:grid; place-items:center; padding:24px;
+  background:linear-gradient(160deg, var(--nav) 0%, var(--nav-2) 55%, var(--bg) 55.1%);
+}
+body.centered .card{width:100%; max-width:390px; box-shadow:var(--shadow-lg)}
+
+/* ---------------- duyarlılık ---------------- */
+@media (max-width:1080px){
+  .split-2{grid-template-columns:1fr}
+  .split-even{grid-template-columns:1fr}
+}
+@media (max-width:920px){
+  .app{grid-template-columns:1fr}
+  aside{position:relative; height:auto}
+  main{padding:18px 16px 44px}
+  h1{font-size:25px}
+  h2{font-size:18px; margin-top:28px}
+  .money-hero .amount{font-size:34px}
+  .kpi .value{font-size:27px}
+}

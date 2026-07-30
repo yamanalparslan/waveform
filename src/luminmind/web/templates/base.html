@@ -5,207 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% if auto_refresh_s %}<meta http-equiv="refresh" content="{{ auto_refresh_s }}">{% endif %}
 <title>{% block title %}LuminMind{% endblock %} · LuminMind</title>
-<style>
-:root{
-  /* Grafit gövde + güneş kehribar vurgu — enerji izleme sistemine özgü palet */
-  --bg:#0b0f14; --bg2:#0e1319;
-  --surface:#141a23; --surface-2:#1a2230; --surface-3:#212b3b;
-  --line:#243043; --line-soft:#243043a0;
-  --text:#e6ecf3; --text-dim:#a3adbd; --text-faint:#6a778a;
-  --amber:#f2b544; --amber-soft:#f2b54426;
-  --teal:#3ba09f; --teal-soft:#3ba09f22;
-  --coral:#e2725b; --coral-soft:#e2725b22;
-  --blue:#5aa1e3; --blue-soft:#5aa1e326;
-  --violet:#8a7dd6; --violet-soft:#8a7dd626;
-
-  --r-sm:6px; --r-md:10px; --r-lg:14px; --r-xl:20px;
-  --shadow-lg: 0 10px 30px -12px #000000cc, 0 2px 6px -2px #00000060;
-
-  --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
-}
-*{box-sizing:border-box;margin:0}
-html,body{height:100%}
-body{
-  background:
-    radial-gradient(1200px 600px at 85% -10%, #1a2635 0%, transparent 55%),
-    radial-gradient(900px 500px at 0% 100%, #16202d 0%, transparent 60%),
-    var(--bg);
-  color:var(--text); font:15px/1.55 var(--sans); -webkit-font-smoothing:antialiased;
-}
-.num{font-variant-numeric:tabular-nums; font-family:var(--mono); letter-spacing:-.01em}
-a{color:var(--blue);text-decoration:none}
-a:hover{text-decoration:underline}
-button, .btn{
-  font:600 13px var(--sans); background:var(--surface-2); color:var(--text);
-  border:1px solid var(--line); padding:8px 14px; border-radius:var(--r-sm);
-  cursor:pointer; transition:.15s; display:inline-flex; align-items:center; gap:8px;
-}
-button:hover,.btn:hover{background:var(--surface-3); border-color:#334259}
-button.primary{background:var(--amber); color:#1c1608; border-color:transparent; font-weight:700}
-button.primary:hover{background:#ffca5c}
-button.ghost{background:transparent}
-button:focus-visible,input:focus-visible,select:focus-visible{
-  outline:2px solid var(--amber); outline-offset:2px
-}
-input,select,textarea{
-  background:var(--bg2); border:1px solid var(--line); color:var(--text);
-  padding:9px 12px; border-radius:var(--r-sm); font:14px var(--sans); width:100%;
-}
-label{display:block;font-size:12px;color:var(--text-dim);margin:14px 0 5px;
-  text-transform:uppercase; letter-spacing:.5px; font-weight:600}
-
-/* ---- App shell ---- */
-.app{display:grid; grid-template-columns:230px 1fr; min-height:100vh}
-aside{
-  background:linear-gradient(180deg, #10151d 0%, #0c1017 100%);
-  border-right:1px solid var(--line); padding:20px 14px; position:sticky; top:0; height:100vh;
-}
-.brand{display:flex; align-items:center; gap:10px; padding:6px 10px 22px; font-weight:700;
-  font-size:17px; letter-spacing:-.4px}
-.brand .mark{
-  width:26px; height:26px; border-radius:8px;
-  background:conic-gradient(from 210deg, var(--amber), #b57a10, var(--amber));
-  box-shadow: 0 0 20px -4px var(--amber-soft), inset 0 0 0 2px #00000040;
-  display:grid; place-items:center; color:#231802; font-size:14px;
-}
-.brand b{color:var(--amber)}
-nav.side{display:flex; flex-direction:column; gap:2px}
-nav.side a{
-  display:flex; align-items:center; gap:12px;
-  color:var(--text-dim); padding:9px 12px; border-radius:var(--r-sm);
-  font-size:14px; text-decoration:none; transition:.15s;
-}
-nav.side a:hover{background:var(--surface); color:var(--text)}
-nav.side a.active{background:var(--surface); color:var(--text);
-  box-shadow: inset 3px 0 0 var(--amber); padding-left:15px}
-nav.side a.plant-link{font-weight:600}
-nav.side a.plant-link .plant-name{flex:1; overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap}
-nav.side a.sub{padding-left:34px; font-size:13px}
-nav.side a.sub.active{padding-left:34px} /* alt-nav aktifken sol vurgu istemiyoruz */
-nav.side .icn{width:16px; text-align:center; opacity:.85}
-nav.side .divider{height:1px; background:var(--line); margin:14px 6px}
-nav.side .section-label{font-size:10.5px; text-transform:uppercase; letter-spacing:.8px;
-  color:var(--text-faint); padding:8px 12px 6px; font-weight:700}
-
-main{padding:24px 34px 48px; max-width:1240px; width:100%}
-.topbar{display:flex; align-items:center; gap:18px; margin-bottom:22px; flex-wrap:wrap}
-.crumbs{color:var(--text-faint); font-size:13px}
-.crumbs b{color:var(--text); font-weight:600}
-.spacer{flex:1}
-.userchip{display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:13px;
-  background:var(--surface); border:1px solid var(--line); border-radius:20px;
-  padding:5px 5px 5px 12px}
-.userchip form button{padding:5px 12px; border-radius:14px; font-size:12px}
-.avatar{width:26px; height:26px; border-radius:50%;
-  background:linear-gradient(135deg, var(--amber), var(--coral));
-  display:grid; place-items:center; color:#1c1608; font-weight:700; font-size:12px}
-
-h1{font-size:22px; letter-spacing:-.5px; margin-bottom:4px; text-wrap:balance; font-weight:700}
-.sub{color:var(--text-dim); font-size:13.5px; margin-bottom:22px}
-h2{font-size:11px; text-transform:uppercase; letter-spacing:.9px; color:var(--text-faint);
-  font-weight:700; margin:28px 0 12px; display:flex; align-items:center; gap:10px}
-h2::after{content:""; flex:1; height:1px; background:var(--line-soft)}
-
-/* ---- Cards ---- */
-.card{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
-  overflow:hidden}
-.card.pad{padding:20px 22px}
-.card.hoverable{transition:.18s; cursor:pointer}
-.card.hoverable:hover{border-color:#334259; transform:translateY(-1px);
-  box-shadow:var(--shadow-lg)}
-.grid{display:grid; gap:16px}
-.grid.cards-3{grid-template-columns:repeat(auto-fit, minmax(280px, 1fr))}
-.grid.cards-2{grid-template-columns:repeat(auto-fit, minmax(360px, 1fr))}
-.split-2{display:grid; grid-template-columns:2fr 1fr; gap:16px}
-@media (max-width:920px){.split-2{grid-template-columns:1fr} .app{grid-template-columns:1fr}
-  aside{position:relative; height:auto; border-right:0; border-bottom:1px solid var(--line)}}
-
-/* ---- KPI ---- */
-.kpi{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
-  padding:16px 18px; position:relative; overflow:hidden}
-.kpi::after{content:""; position:absolute; inset:auto 0 0 0; height:2px;
-  background:linear-gradient(90deg, transparent, var(--amber), transparent); opacity:0}
-.kpi:hover::after{opacity:.5}
-.kpi .label{color:var(--text-dim); font-size:11.5px; text-transform:uppercase;
-  letter-spacing:.6px; font-weight:600}
-.kpi .value{font-size:28px; margin-top:6px; font-weight:700; letter-spacing:-.5px;
-  font-variant-numeric:tabular-nums; font-family:var(--mono)}
-.kpi .value small{font-size:14px; font-weight:600; color:var(--text-dim);
-  margin-left:4px; font-family:var(--sans)}
-.kpi .trend{font-size:11.5px; color:var(--text-faint); margin-top:4px}
-.kpi .trend.up{color:var(--teal)} .kpi .trend.down{color:var(--coral)}
-.kpi.accent-amber{border-left:3px solid var(--amber)}
-.kpi.accent-teal{border-left:3px solid var(--teal)}
-.kpi.accent-coral{border-left:3px solid var(--coral)}
-.kpi.accent-blue{border-left:3px solid var(--blue)}
-
-/* ---- Chips ---- */
-.chip{display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:20px;
-  font-size:11.5px; font-weight:600; letter-spacing:.2px}
-.chip::before{content:""; width:6px; height:6px; border-radius:50%; background:currentColor}
-.chip.ok{background:var(--teal-soft); color:#5cc4c2}
-.chip.warn{background:var(--amber-soft); color:var(--amber)}
-.chip.crit{background:var(--coral-soft); color:#f08874}
-.chip.info{background:var(--blue-soft); color:#7cb7ee}
-.chip.muted{background:#8b95a722; color:var(--text-dim)}
-.chip.violet{background:var(--violet-soft); color:#a89cea}
-.chip.plain{background:transparent; padding:2px 0; color:var(--text-dim)}
-.chip.plain::before{display:none}
-
-/* ---- Tables ---- */
-table{width:100%; border-collapse:collapse; font-size:14px}
-th,td{text-align:left; padding:11px 16px; border-bottom:1px solid var(--line-soft)}
-tr:last-child td{border-bottom:0}
-th{color:var(--text-faint); font-weight:600; font-size:11px; text-transform:uppercase;
-  letter-spacing:.6px; background:#ffffff03}
-tr:hover td{background:#ffffff03}
-td.num{font-variant-numeric:tabular-nums; font-family:var(--mono); font-size:13.5px}
-td.desc{color:var(--text-dim); font-size:13px; max-width:320px}
-
-/* ---- Charts ---- */
-.chart-wrap{background:var(--bg2); border:1px solid var(--line); border-radius:var(--r-md);
-  padding:14px; overflow-x:auto}
-.chart-wrap svg{width:100%; height:auto; min-width:640px; display:block}
-.chart .grid{stroke:var(--line); stroke-width:1}
-.chart .tick{fill:var(--text-faint); font-size:11px; font-family:var(--mono)}
-.chart .unit{fill:var(--text-dim); font-weight:600; font-family:var(--sans)}
-.chart-empty{fill:var(--text-faint); font-size:14px}
-
-/* ---- Utilities ---- */
-.toolbar{display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap}
-.toolbar input, .toolbar select{width:auto; max-width:220px}
-.pill-date{background:var(--surface); border:1px solid var(--line); border-radius:20px;
-  padding:6px 14px; font-size:13px; color:var(--text-dim); font-variant-numeric:tabular-nums;
-  font-family:var(--mono)}
-.note{color:var(--text-faint); font-size:12.5px; margin-top:12px; line-height:1.6}
-.error{background:var(--coral-soft); color:#f08874; padding:10px 14px; border-radius:var(--r-sm);
-  margin-bottom:14px; font-size:14px; border:1px solid #e2725b40}
-.info{background:var(--blue-soft); color:#93c1ee; padding:10px 14px; border-radius:var(--r-sm);
-  margin-bottom:14px; font-size:14px; border:1px solid #5aa1e340}
-.success{background:var(--teal-soft); color:#5cc4c2; padding:10px 14px; border-radius:var(--r-sm);
-  margin-bottom:14px; font-size:14px; border:1px solid #3ba09f40}
-form.inline{display:inline}
-.row-inline{display:flex; gap:14px; align-items:center; flex-wrap:wrap}
-.plant-card-body{padding:16px 18px}
-.plant-card-header{padding:14px 18px 6px; display:flex; justify-content:space-between;
-  align-items:flex-start; gap:12px}
-.plant-card-title{font-size:15px; font-weight:600}
-.plant-card-meta{color:var(--text-faint); font-size:12px; margin-top:2px}
-.mini-metrics{display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; margin-top:8px}
-.mini-metrics div .k{font-size:11px; color:var(--text-faint); text-transform:uppercase;
-  letter-spacing:.4px}
-.mini-metrics div .v{font-size:16px; font-weight:700; font-variant-numeric:tabular-nums;
-  font-family:var(--mono); margin-top:2px}
-.spark{margin-top:12px; height:44px; width:100%}
-.badge-count{display:inline-block; min-width:20px; padding:1px 7px; border-radius:10px;
-  font-size:10.5px; background:var(--coral); color:#fff; font-weight:700; margin-left:6px;
-  font-family:var(--mono)}
-
-/* Login page overrides */
-body.centered{display:grid; place-items:center; padding:24px}
-</style>
+{#
+  Palet Python'da (web/theme.py) yaşar ve buraya gömülür; yerleşim ve bileşen
+  kuralları önbelleklenebilir statik dosyada durur. Sıra önemli: değişkenler
+  stil dosyasından önce tanımlanmalı.
+#}
+<style>{{ theme_css }}</style>
+<link rel="stylesheet" href="/static/app.css">
 {% block head %}{% endblock %}
 </head>
 <body{% if not user %} class="centered"{% endif %}>
@@ -217,45 +23,61 @@ body.centered{display:grid; place-items:center; padding:24px}
       <span>Lumin<b>Mind</b></span>
     </div>
     <nav class="side">
-      <a href="/ui" class="{{ 'active' if section == 'overview' }}">
-        <span class="icn">◨</span> Genel Bakış</a>
+      <a href="/ui" class="{{ 'active' if section == 'portfolio' }}">
+        <span class="icn">▤</span> <span class="label">Portföy</span></a>
       <a href="/ui/harita" class="{{ 'active' if section == 'map' }}">
-        <span class="icn">◎</span> Saha Haritası</a>
+        <span class="icn">◎</span> <span class="label">Harita</span></a>
       <a href="/ui/raporlar" class="{{ 'active' if section == 'reports' }}">
-        <span class="icn">▤</span> Raporlar</a>
+        <span class="icn">◫</span> <span class="label">Geçmiş &amp; Kazanç</span></a>
+
       {% if sidebar_plants %}
       <div class="divider"></div>
-      <div class="section-label">Tesisler</div>
+      <div class="section-label">Santralleriniz</div>
       {% for sp in sidebar_plants %}
-      <a href="/ui/plants/{{ sp.id }}"
-         class="plant-link {{ 'active' if plant and sp.id == plant.id }}">
+      {% set is_current = plant and sp.id == plant.id %}
+      <a href="/ui/plants/{{ sp.id }}" class="plant-link {{ 'active' if is_current and not site }}">
         <span class="icn">▪</span>
-        <span class="plant-name">{{ sp.name }}</span>
+        <span class="label">{{ sp.name }}</span>
         {% if sp.open_anomalies %}<span class="badge-count">{{ sp.open_anomalies }}</span>{% endif %}
       </a>
-      {% if plant and sp.id == plant.id %}
-      <a href="/ui/plants/{{ plant.id }}/anomalies"
-         class="sub {{ 'active' if section == 'anomalies' }}">
-        <span class="icn">△</span> Anomaliler</a>
-      <a href="/ui/plants/{{ plant.id }}/arbitrage"
-         class="sub {{ 'active' if section == 'arbitrage' }}">
-        <span class="icn">⇄</span> Arbitraj</a>
+      {% if is_current %}
+        {% for st in sp.sites %}
+        <a href="/ui/plants/{{ sp.id }}/sites/{{ st.code }}"
+           class="sub2 {{ 'active' if site and site.code == st.code }}">
+          <span class="icn">▫</span> <span class="label">{{ st.name }}</span></a>
+        {% endfor %}
+        <a href="/ui/plants/{{ sp.id }}/insights"
+           class="sub {{ 'active' if section == 'insights' }}">
+          <span class="icn">◆</span> <span class="label">Aksiyon planı</span></a>
+        <a href="/ui/plants/{{ sp.id }}/devices"
+           class="sub {{ 'active' if section == 'devices' }}">
+          <span class="icn">◧</span> <span class="label">Cihazlar</span></a>
+        <a href="/ui/plants/{{ sp.id }}/heatmap"
+           class="sub {{ 'active' if section == 'heatmap' }}">
+          <span class="icn">▦</span> <span class="label">Isı haritası</span></a>
+        <a href="/ui/plants/{{ sp.id }}/anomalies"
+           class="sub {{ 'active' if section == 'anomalies' }}">
+          <span class="icn">△</span> <span class="label">Yapılacaklar</span></a>
+        <a href="/ui/plants/{{ sp.id }}/arbitrage"
+           class="sub {{ 'active' if section == 'arbitrage' }}">
+          <span class="icn">⇄</span> <span class="label">Batarya planı</span></a>
       {% endif %}
       {% endfor %}
       {% endif %}
+
       {% if user.role == 'admin' %}
       <div class="divider"></div>
       <div class="section-label">Yönetim</div>
       <a href="/ui/tesisler/yeni" class="{{ 'active' if section == 'plant-new' }}">
-        <span class="icn">+</span> Tesis Ekle</a>
+        <span class="icn">+</span> <span class="label">Santral ekle</span></a>
       <a href="/ui/kullanicilar" class="{{ 'active' if section == 'users' }}">
-        <span class="icn">◈</span> Kullanıcılar</a>
+        <span class="icn">◈</span> <span class="label">Kullanıcılar</span></a>
       {% endif %}
     </nav>
   </aside>
   <main>
     <div class="topbar">
-      <div class="crumbs">{% block crumbs %}<b>{{ page_title or 'Genel Bakış' }}</b>{% endblock %}</div>
+      <div class="crumbs">{% block crumbs %}<b>{{ page_title or 'Portföy' }}</b>{% endblock %}</div>
       <div class="spacer"></div>
       <div class="userchip">
         <span class="avatar">{{ user.email[0] | upper }}</span>
@@ -263,6 +85,7 @@ body.centered{display:grid; place-items:center; padding:24px}
         <form class="inline" method="post" action="/ui/logout"><button>Çıkış</button></form>
       </div>
     </div>
+    {% block tabs %}{% endblock %}
     {% block content %}{% endblock %}
   </main>
 </div>

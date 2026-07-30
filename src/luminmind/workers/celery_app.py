@@ -16,6 +16,8 @@ app = Celery(
         "luminmind.workers.tasks.twin",
         "luminmind.workers.tasks.comparison",
         "luminmind.workers.tasks.arbitrage",
+        "luminmind.workers.tasks.accuracy",
+        "luminmind.workers.tasks.calibration",
     ],
 )
 
@@ -47,6 +49,17 @@ app.conf.beat_schedule = {
         "task": "luminmind.detect_anomalies",
         # gece 01:00 UTC (downsample sonrası): dünün beklenen vs gerçek analizi
         "schedule": crontab(minute=0, hour=1),
+    },
+    "score-twin-accuracy": {
+        "task": "luminmind.score_twin_accuracy",
+        # gece 01:30 UTC (anomali analizinden sonra): dünün tahmin doğruluğu
+        "schedule": crontab(minute=30, hour=1),
+    },
+    "calibrate-twin": {
+        "task": "luminmind.calibrate_twin",
+        # pazartesi 02:00 UTC: haftalık kalibrasyon. Günlük çalıştırmak modeli
+        # gürültüye kovalatır; öğrenme oranı zaten yavaş harmanlıyor.
+        "schedule": crontab(minute=0, hour=2, day_of_week=1),
     },
     "plan-arbitrage": {
         "task": "luminmind.plan_arbitrage",
