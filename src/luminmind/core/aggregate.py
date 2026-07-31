@@ -11,15 +11,24 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from luminmind.analytics.rollup import counter_increments, counter_kind_for
+
 
 @dataclass(frozen=True)
 class RawSample:
-    """Influx `pv_telemetry`'den okunan tek satır (bir cihazın bir zaman damgası)."""
+    """Influx `pv_telemetry`'den okunan tek satır (bir cihazın bir zaman damgası).
+
+    `vendor` sayaç semantiğini çözmek için taşınır (günlük sıfırlanan mı,
+    ömürlük mü — bkz. `analytics.rollup.CounterKind`). Etiket Influx'ta zaten
+    yazılı; okumada atılırsa agregasyon her sayacı ömürlük sanar ve günlük
+    sayaçta pencerenin ilk okumasını sessizce düşürür.
+    """
 
     ts: datetime
     plant_id: str
     inverter_id: str
     fields: dict[str, float] = field(default_factory=dict)
+    vendor: str = ""
 
 
 @dataclass(frozen=True)
@@ -49,18 +58,44 @@ def _day_floor(ts: datetime) -> datetime:
     return ts.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _hourly_energy(samples: list[RawSample]) -> dict[tuple[datetime, str, str], float]:
+    """Cihaz bazında sayaç artışlarını saatlere dağıtır.
+
+    Enerji **cihazın tüm serisi üzerinden** yürünerek hesaplanır, saat saat
+    değil: saat içinde "son − ilk" almak iki saat arasındaki aralığı hiçbir
+    saate saymıyordu ve 15 dakikalık örneklemede her saatin dörtte birini
+    siliyordu (bkz. `rollup.counter_increments`).
+
+    Sayaç semantiği cihazın üreticisinden çözülür; günlük sıfırlanan sayaçta
+    pencerenin ilk okuması da üretim sayılır.
+    """
+    series: dict[tuple[str, str, str], list[tuple[datetime, float]]] = defaultdict(list)
+    for sample in samples:
+        value = sample.fields.get("energy_total_kwh")
+        if value is not None:
+            series[(sample.plant_id, sample.inverter_id, sample.vendor)].append(
+                (sample.ts, value)
+            )
+
+    energy: dict[tuple[datetime, str, str], float] = defaultdict(float)
+    for (plant_id, inverter_id, vendor), readings in series.items():
+        for ts, increment in counter_increments(readings, counter_kind_for(vendor)):
+            energy[(_hour_floor(ts), plant_id, inverter_id)] += increment
+    return dict(energy)
+
+
 def aggregate_hourly(samples: list[RawSample]) -> list[HourlyAggregate]:
     buckets: dict[tuple[datetime, str, str], list[RawSample]] = defaultdict(list)
     for sample in samples:
         buckets[(_hour_floor(sample.ts), sample.plant_id, sample.inverter_id)].append(sample)
 
+    energy_by_hour = _hourly_energy(samples)
     aggregates: list[HourlyAggregate] = []
-    for (hour_start, plant_id, inverter_id), bucket in sorted(buckets.items()):
+    for key, bucket in sorted(buckets.items()):
+        hour_start, plant_id, inverter_id = key
         bucket.sort(key=lambda s: s.ts)
         ac_values = [s.fields["ac_power_kw"] for s in bucket if "ac_power_kw" in s.fields]
-        energy_values = [
-            s.fields["energy_total_kwh"] for s in bucket if "energy_total_kwh" in s.fields
-        ]
+        energy = energy_by_hour.get(key)
         aggregates.append(
             HourlyAggregate(
                 hour_start=hour_start,
@@ -71,30 +106,10 @@ def aggregate_hourly(samples: list[RawSample]) -> list[HourlyAggregate]:
                     None if not ac_values else round(sum(ac_values) / len(ac_values), 4)
                 ),
                 ac_power_kw_max=None if not ac_values else max(ac_values),
-                energy_kwh=_energy_delta(energy_values),
+                energy_kwh=None if energy is None else round(energy, 4),
             )
         )
     return aggregates
-
-
-def _energy_delta(energy_values: list[float]) -> float | None:
-    """Sayaç okumalarından saat içi üretimi çıkarır; sayaç sıfırlanmasına dayanıklı.
-
-    Üreticiler iki tür sayaç verir: kümülatif (Huawei/SMA, hiç sıfırlanmaz) ve
-    **günlük** (Tescom `gunluk_uretim_kwh`, gece yarısı sıfırlanır). Düz fark
-    almak günlük sayaçta reset saatinde negatif değer üretir (ör. 18,4 → 0,0 =
-    −18,4 kWh) ve günlük toplamı bozar.
-
-    Son okuma ilkinden küçükse pencere içinde reset olmuş demektir; o saatteki
-    üretim reset sonrası birikmiş değer kadardır. Kümülatif sayaçlarda bu dal
-    hiç çalışmaz, davranış değişmez.
-    """
-    if len(energy_values) < 2:
-        return None
-    delta = energy_values[-1] - energy_values[0]
-    if delta < 0:
-        delta = energy_values[-1]
-    return round(delta, 4)
 
 
 def aggregate_daily(hourly: list[HourlyAggregate]) -> list[DailyAggregate]:
@@ -105,7 +120,13 @@ def aggregate_daily(hourly: list[HourlyAggregate]) -> list[DailyAggregate]:
 
     dailies: list[DailyAggregate] = []
     for (day_start, plant_id), bucket in sorted(buckets.items()):
-        energy = sum(a.energy_kwh for a in bucket if a.energy_kwh is not None)
+        # `float(...)` şart: `sum()` boş üreteçte **int** 0 döner ve `round(0, 4)`
+        # de int kalır. Alan `float` diye anotasyonlu olduğu için bu fark tip
+        # denetiminden geçiyor ama Influx'a int olarak yazılıyor — Influx da alan
+        # tipini ilk yazımda sabitlediği için `pv_daily.energy_kwh` integer
+        # tiplenmiş ve sonraki tüm ondalıklı yazımlar sunucuda sessizce
+        # düşmüştü (22–29.07.2026 arası günlük enerji bu yüzden hep 0 göründü).
+        energy = float(sum(a.energy_kwh for a in bucket if a.energy_kwh is not None))
         peaks = [a.ac_power_kw_max for a in bucket if a.ac_power_kw_max is not None]
         dailies.append(
             DailyAggregate(

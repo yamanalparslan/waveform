@@ -57,6 +57,14 @@ def test_hourly_is_deterministic_idempotent():
 
 
 def test_daily_sums_energy_and_takes_peak_per_plant():
+    """Günlük toplam sayacın uçtan uca artışına eşit olmalı.
+
+    Bu test eskiden 50 kWh bekliyordu — `(1030−1000) + (1080−1060)`, yani her
+    saatin *içindeki* fark. O formül iki saat arasındaki `1030 → 1060` dilimini
+    (30 kWh) hiçbir saate saymıyordu; 15 dakikalık örneklemede bu, her saatin
+    dörtte birinin sistematik olarak kaybı demekti. Sayaç 1000'den 1080'e
+    çıktığına göre üretim 80 kWh'dir.
+    """
     samples = [
         sample(0, 100.0, 1000.0, dev="inv-01"),
         sample(15, 140.0, 1030.0, dev="inv-01"),
@@ -67,8 +75,25 @@ def test_daily_sums_energy_and_takes_peak_per_plant():
     [daily] = aggregate_daily(hourly)
     assert daily.plant_id == "p1"
     assert daily.day_start == H0.replace(hour=0)
-    assert daily.energy_kwh == 50.0  # (1030-1000) + (1080-1060)
+    assert daily.energy_kwh == 80.0  # 1080 − 1000, saat sınırı dahil
     assert daily.peak_ac_power_kw == 140.0
+    # Saat sınırındaki dilim kaybolmasın: saatlerin toplamı uçtan uca artışa eşit
+    assert sum(a.energy_kwh or 0.0 for a in hourly) == 80.0
+
+
+def test_daily_energy_is_float_even_when_zero():
+    """Sıfır enerji `int` olmamalı — Influx alan tipini ilk yazımda sabitliyor.
+
+    `sum()` boş üreteçte int 0 döner; o değer Influx'a int yazılınca alan
+    integer tiplenir ve sonraki tüm ondalıklı yazımlar sunucu tarafında sessizce
+    düşer. `pv_daily.energy_kwh` sahada tam bu yüzden bir hafta boyunca 0 kaldı.
+    """
+    no_counter = RawSample(
+        ts=H0, plant_id="p1", inverter_id="inv-01", fields={"ac_power_kw": 10.0}
+    )
+    [daily] = aggregate_daily(aggregate_hourly([no_counter]))
+    assert daily.energy_kwh == 0.0
+    assert isinstance(daily.energy_kwh, float)
 
 
 def test_daily_counter_reset_does_not_produce_negative_energy():

@@ -88,6 +88,28 @@ from(bucket: "{bucket}")
 """
 
 
+def _num(record: Point, name: str, value: float | int | None) -> Point:
+    """Sayısal alanı **daima float olarak** yazar; `None` alanı hiç yazmaz.
+
+    InfluxDB bir alanın tipini o alanın *ilk* yazımında sabitler. Python'da
+    `3532.4` float, `0` ise int olduğu için aynı alan bir gün tam sayı denk
+    gelirse integer tiplenir ve sonraki tüm ondalıklı yazımlar sunucu tarafında
+    **sessizce düşer**:
+
+        partial write: field type conflict: input field "energy_kwh" on
+        measurement "pv_daily" is type float, already exists as type integer
+        dropped=2
+
+    Hata yalnızca worker logunda görünür; panel eksik günü "üretim yok" diye
+    gösterir. Bu yüzden tip dönüşümü her çağrı yerinde tekrarlanmak yerine tek
+    kapıdan geçiyor — `sample_count` alanında zaten elle yapılıyordu, ama diğer
+    alanlar açıkta kalmıştı.
+    """
+    if value is not None:
+        record.field(name, float(value))
+    return record
+
+
 def telemetry_to_point(point: TelemetryPoint) -> Point:
     record = (
         Point(MEASUREMENT_RAW)
@@ -98,7 +120,7 @@ def telemetry_to_point(point: TelemetryPoint) -> Point:
     if point.vendor_device_id is not None:
         record.tag("inverter_id", point.vendor_device_id)
     for name, value in point.measured_fields().items():
-        record.field(name, value)
+        _num(record, name, value)
     return record
 
 
@@ -111,13 +133,11 @@ def twin_to_point(point: TwinPoint) -> Point:
     Alan olarak tutulunca yeniden yazım doğal olarak üzerine yazar.
     """
     measurement = MEASUREMENT_TWIN if point.horizon_days == 0 else MEASUREMENT_FORECAST
-    record = (
-        Point(measurement)
-        .tag("plant_id", point.plant_id)
-        .time(point.ts, WritePrecision.S)
-        .field("expected_ac_kw", point.expected_ac_kw)
-        .field("model_version", point.model_version)
+    record = Point(measurement).tag("plant_id", point.plant_id).time(
+        point.ts, WritePrecision.S
     )
+    _num(record, "expected_ac_kw", point.expected_ac_kw)
+    record.field("model_version", point.model_version)  # metin alanı
     if point.horizon_days != 0:
         record.tag("horizon_days", str(point.horizon_days))
     for name, value in (
@@ -128,8 +148,7 @@ def twin_to_point(point: TwinPoint) -> Point:
         ("clipping_loss_kw", point.clipping_loss_kw),
         ("soiling_ratio", point.soiling_ratio),
     ):
-        if value is not None:
-            record.field(name, value)
+        _num(record, name, value)
     return record
 
 
@@ -139,24 +158,25 @@ def accuracy_to_point(score: AccuracyScore) -> Point:
         .tag("plant_id", score.plant_id)
         .tag("horizon_days", str(score.horizon_days))
         .time(datetime.combine(score.day, time.min, tzinfo=UTC), WritePrecision.S)
-        .field("model_version", score.model_version)
-        .field("sample_count", float(score.sample_count))
-        .field("capacity_kw", score.capacity_kw)
-        .field("mae_kw", score.mae_kw)
-        .field("rmse_kw", score.rmse_kw)
-        .field("mbe_kw", score.mbe_kw)
-        .field("nmae_pct", score.nmae_pct)
-        .field("nrmse_pct", score.nrmse_pct)
-        .field("nmbe_pct", score.nmbe_pct)
-        .field("r2", score.r2)
-        .field("energy_actual_kwh", score.energy_actual_kwh)
-        .field("energy_expected_kwh", score.energy_expected_kwh)
-        .field("energy_error_pct", score.energy_error_pct)
+        .field("model_version", score.model_version)  # metin alanı
     )
-    if score.skill_vs_reference is not None:
-        record.field("skill_vs_reference", score.skill_vs_reference)
-    if score.band_coverage_pct is not None:
-        record.field("band_coverage_pct", score.band_coverage_pct)
+    for name, value in (
+        ("sample_count", score.sample_count),
+        ("capacity_kw", score.capacity_kw),
+        ("mae_kw", score.mae_kw),
+        ("rmse_kw", score.rmse_kw),
+        ("mbe_kw", score.mbe_kw),
+        ("nmae_pct", score.nmae_pct),
+        ("nrmse_pct", score.nrmse_pct),
+        ("nmbe_pct", score.nmbe_pct),
+        ("r2", score.r2),
+        ("energy_actual_kwh", score.energy_actual_kwh),
+        ("energy_expected_kwh", score.energy_expected_kwh),
+        ("energy_error_pct", score.energy_error_pct),
+        ("skill_vs_reference", score.skill_vs_reference),
+        ("band_coverage_pct", score.band_coverage_pct),
+    ):
+        _num(record, name, value)
     return record
 
 
@@ -166,25 +186,29 @@ def hourly_to_point(aggregate: HourlyAggregate) -> Point:
         .tag("plant_id", aggregate.plant_id)
         .tag("inverter_id", aggregate.inverter_id)
         .time(aggregate.hour_start, WritePrecision.S)
-        .field("sample_count", float(aggregate.sample_count))
     )
-    if aggregate.ac_power_kw_mean is not None:
-        record.field("ac_power_kw_mean", aggregate.ac_power_kw_mean)
-    if aggregate.ac_power_kw_max is not None:
-        record.field("ac_power_kw_max", aggregate.ac_power_kw_max)
-    if aggregate.energy_kwh is not None:
-        record.field("energy_kwh", aggregate.energy_kwh)
+    for name, value in (
+        ("sample_count", aggregate.sample_count),
+        ("ac_power_kw_mean", aggregate.ac_power_kw_mean),
+        ("ac_power_kw_max", aggregate.ac_power_kw_max),
+        ("energy_kwh", aggregate.energy_kwh),
+    ):
+        _num(record, name, value)
     return record
 
 
 def daily_to_point(aggregate: DailyAggregate) -> Point:
-    return (
+    record = (
         Point(MEASUREMENT_DAILY)
         .tag("plant_id", aggregate.plant_id)
         .time(aggregate.day_start, WritePrecision.S)
-        .field("energy_kwh", aggregate.energy_kwh)
-        .field("peak_ac_power_kw", aggregate.peak_ac_power_kw)
     )
+    for name, value in (
+        ("energy_kwh", aggregate.energy_kwh),
+        ("peak_ac_power_kw", aggregate.peak_ac_power_kw),
+    ):
+        _num(record, name, value)
+    return record
 
 
 class InfluxStore:
@@ -414,7 +438,9 @@ from(bucket: "{BUCKET_RAW}")
   |> filter(fn: (r) => r._measurement == "{MEASUREMENT_RAW}")
 """
         tables = await self._client.query_api().query(flux)
-        grouped: dict[tuple[datetime, str, str], dict[str, float]] = {}
+        # `vendor` anahtara dahil: sayaç semantiği (günlük sıfırlanan / ömürlük)
+        # ondan çözülüyor ve atılırsa agregasyon her sayacı ömürlük sanar.
+        grouped: dict[tuple[datetime, str, str, str], dict[str, float]] = {}
         for table in tables:
             for record in table.records:
                 values: dict[str, Any] = record.values
@@ -422,9 +448,16 @@ from(bucket: "{BUCKET_RAW}")
                     record.get_time(),
                     str(values.get("plant_id", "")),
                     str(values.get("inverter_id", "")),
+                    str(values.get("vendor", "")),
                 )
                 grouped.setdefault(key, {})[record.get_field()] = float(record.get_value())
         return [
-            RawSample(ts=ts, plant_id=plant_id, inverter_id=inverter_id, fields=fields)
-            for (ts, plant_id, inverter_id), fields in sorted(grouped.items())
+            RawSample(
+                ts=ts,
+                plant_id=plant_id,
+                inverter_id=inverter_id,
+                fields=fields,
+                vendor=vendor,
+            )
+            for (ts, plant_id, inverter_id, vendor), fields in sorted(grouped.items())
         ]

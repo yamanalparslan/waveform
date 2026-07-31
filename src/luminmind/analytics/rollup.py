@@ -18,8 +18,47 @@ edilebilir. Toplama kuralları bilinçli olarak birbirinden farklı:
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
 Series = Mapping[datetime, float]
+
+
+class CounterKind(StrEnum):
+    """Enerji sayacının sıfırlanma davranışı.
+
+    Bu ayrım pencerenin *ilk* okumasının nasıl yorumlanacağını belirler ve
+    atlanması sessiz veri kaybına yol açar:
+
+    - `DAILY_RESET` (Tescom `gunluk_uretim_kwh`): sayaç her gece sıfırlanır,
+      dolayısıyla okunan değer "bugün şu ana kadar üretilen"dir. Gün penceresinin
+      ilk okuması 39 kWh ise o 39 kWh **bugün üretilmiştir** ve sayılmalıdır.
+    - `LIFETIME` (SMA `totalYield`, Huawei `total_cap`): sayaç hiç sıfırlanmaz,
+      okunan değer kurulumdan beri toplam üretimdir. İlk okuma taban kabul
+      edilmek *zorundadır*; sayılırsa ömür boyu üretim bugüne yazılır.
+
+    Eskiden tek bir kod yolu ikisine de hizmet ediyordu ve tabanı hep ilk
+    okumaya eşitliyordu — `LIFETIME` için doğru, `DAILY_RESET` için kayıp.
+    29.07.2026'da çekim 08:37'de başladığı için sayaçlar 39/58/34 kWh okuyordu
+    ve günün ilk 131 kWh'i (%4) panelden silinmişti.
+    """
+
+    DAILY_RESET = "daily_reset"
+    LIFETIME = "lifetime"
+
+
+# Üretici → sayaç semantiği. Yeni bir üretici eklendiğinde burada
+# tanımlanmazsa `LIFETIME` varsayılır: yanlış tarafa düşmek gerekirse
+# eksik göstermek, ömür boyu üretimi bir güne yazmaktan iyidir.
+COUNTER_KIND_BY_VENDOR: Mapping[str, CounterKind] = {
+    "tescom": CounterKind.DAILY_RESET,
+    "sma": CounterKind.LIFETIME,
+    "huawei": CounterKind.LIFETIME,
+    "mock": CounterKind.LIFETIME,
+}
+
+
+def counter_kind_for(vendor: str) -> CounterKind:
+    return COUNTER_KIND_BY_VENDOR.get(vendor.lower(), CounterKind.LIFETIME)
 
 
 def sum_series(series: Sequence[Series]) -> dict[datetime, float]:
@@ -59,7 +98,9 @@ def energy_kwh(series: Series, interval_hours: float = 0.25) -> float:
 
 
 def counter_energy_kwh(
-    readings: Sequence[tuple[datetime, float]], confirm_samples: int = 2
+    readings: Sequence[tuple[datetime, float]],
+    kind: CounterKind = CounterKind.LIFETIME,
+    confirm_samples: int = 2,
 ) -> float:
     """Enerji sayacı okumalarından pencere içi üretim (kWh).
 
@@ -81,18 +122,51 @@ def counter_energy_kwh(
     kabul edilir; hemen eski seviyeye dönen tekil düşüş yok sayılır ve taban
     korunur.
 
-    Sınır: pencerenin başında okuma yoksa (ör. gece hiç veri çekilememişse)
-    günlük sayacın o ana kadarki değeri görülemez ve sonuç eksik kalır. Bu
-    durumda güç integrali de aynı miktarda eksiktir — yani daha kötüsü değil.
+    **Pencerenin ilk okuması `kind`e göre yorumlanır** (bkz. `CounterKind`).
+    Günlük sayaçta taban 0'dır: gün penceresi gece yarısına hizalı olduğu için
+    okunan her değer o gün üretilmiştir ve çekim öğlen başlasa bile sabahın
+    üretimi sayaçta durur. Ömürlük sayaçta ise taban ilk okumadır — aksi halde
+    kurulumdan beri toplam üretim tek güne yazılır.
+
+    Kalan sınır: günlük sayaçta pencere gece yarısına hizalı *değilse* (ör.
+    öğlenden öğlene 24 saatlik bir pencere) taban 0 kabul etmek pencere
+    öncesindeki üretimi de sayar. Çağıranların gün penceresini gece yarısına
+    hizalaması bu yüzden zorunlu (`_trt_day_window`).
     """
-    values = [value for _, value in sorted(readings)]
-    total = 0.0
-    baseline: float | None = None
-    for index, value in enumerate(values):
+    return sum(value for _, value in counter_increments(readings, kind, confirm_samples))
+
+
+def counter_increments(
+    readings: Sequence[tuple[datetime, float]],
+    kind: CounterKind = CounterKind.LIFETIME,
+    confirm_samples: int = 2,
+) -> list[tuple[datetime, float]]:
+    """Sayaç okumalarını `(aralık başlangıcı, üretilen kWh)` çiftlerine ayırır.
+
+    `counter_energy_kwh` bunun toplamıdır; ayrı durmasının sebebi saatlik
+    agregasyonun **artışları saatlere dağıtmak** zorunda olması. Eskiden saatlik
+    enerji "o saatin son okuması − ilk okuması" olarak hesaplanıyordu ve bu, iki
+    saat arasındaki aralığı hiçbir saate saymıyordu: 15 dakikalık örneklemede
+    `:45 → sonraki :00` dilimi her saatte kayboluyor, yani sistematik olarak
+    dörtte bir eksik. 30.07.2026'da günlük toplam bu yüzden 3.532 kWh yerine
+    1.992 kWh (−%44) çıkıyordu; eksik saatler kaybı büyütüyordu.
+
+    **Artış aralığın başlangıcına yazılır.** İki okuma arasında üretilen enerji
+    o aralıkta üretilmiştir; damgayı aralığın sonuna koymak 23:45–00:00
+    diliminin ertesi güne yazılmasına yol açardı. Günlük sayacın penceredeki
+    ilk okuması (taban 0) kendi damgasına yazılır — öncesinde bir aralık yok.
+    """
+    ordered = sorted(readings)
+    values = [value for _, value in ordered]
+    increments: list[tuple[datetime, float]] = []
+    # Günlük sayaçta ilk okuma zaten üretilmiş enerjidir; ömürlükte tabandır.
+    baseline: float | None = 0.0 if kind is CounterKind.DAILY_RESET else None
+    previous_ts: datetime | None = None
+    for index, (ts, value) in enumerate(ordered):
         if baseline is None:
             baseline = value
         elif value >= baseline:
-            total += value - baseline
+            increments.append((previous_ts or ts, value - baseline))
             baseline = value
         elif any(
             later >= baseline
@@ -101,7 +175,8 @@ def counter_energy_kwh(
             continue  # arızalı okuma: seviye geri geliyor, taban korunur
         else:
             baseline = value  # doğrulanmış sıfırlanma: yeni tabandan devam
-    return total
+        previous_ts = ts
+    return increments
 
 
 def peak_kw(series: Series) -> float:

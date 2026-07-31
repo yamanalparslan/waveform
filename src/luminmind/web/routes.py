@@ -9,7 +9,7 @@ import csv
 import io
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -38,9 +38,11 @@ from luminmind.analytics.insights import (
     shortfall_from_score,
 )
 from luminmind.analytics.rollup import (
+    CounterKind,
     PlantRollup,
     SiteRollup,
     counter_energy_kwh,
+    counter_kind_for,
     energy_kwh,
     peak_kw,
     performance_ratio,
@@ -427,6 +429,7 @@ async def _daily_energy_series(
     # KPI kartıyla aynı kaynaktan okunur; grafiği integralden, kartı sayaçtan
     # beslemek aynı ekranda birbirini tutmayan iki üretim rakamı doğururdu.
     counters = await _counters_by_key(influx, keys, start, stop)
+    kinds = {e.key: e.counter_kind for e in entries}
 
     produced: list[tuple[datetime, float]] = []
     forecast: list[tuple[datetime, float]] = []
@@ -435,7 +438,7 @@ async def _daily_energy_series(
         lo, hi = _trt_day_window(current)
         if lo >= stop:
             break
-        day_actual = _metered_or_integrated(counters, actual, lo, hi)
+        day_actual = _metered_or_integrated(counters, actual, lo, hi, kinds)
         day_expected = sum(
             v for curve in expected.values() for ts, v in curve.items() if lo <= ts < hi
         ) * 0.25
@@ -637,6 +640,10 @@ class SiteEntry:
     key: str  # Influx `plant_id` etiketi
     name: str
     site: Site | None
+    # Sayaç semantiği sahayla taşınır çünkü genel bakış sayfası birden çok
+    # tesisin sahalarını tek listede birleştiriyor; tek bir üretici varsayımı
+    # çok üreticili kurulumda yanlış semantiği uygular (bkz. `CounterKind`).
+    counter_kind: CounterKind = CounterKind.LIFETIME
 
     @property
     def code(self) -> str:
@@ -662,10 +669,18 @@ class PlantDay:
 
 async def _site_entries(plant: Plant) -> list[SiteEntry]:
     """Tesisin izlenen serileri: sahalar varsa onlar, yoksa tesisin kendisi."""
+    kind = counter_kind_for(plant.vendor)
     sites = await plant.awaitable_attrs.sites
     if sites:
-        return [SiteEntry(key=s.series_key, name=s.name, site=s) for s in sites]
-    return [SiteEntry(key=plant.vendor_plant_id, name=plant.name, site=None)]
+        return [
+            SiteEntry(key=s.series_key, name=s.name, site=s, counter_kind=kind)
+            for s in sites
+        ]
+    return [
+        SiteEntry(
+            key=plant.vendor_plant_id, name=plant.name, site=None, counter_kind=kind
+        )
+    ]
 
 
 async def _day_curves(
@@ -701,11 +716,16 @@ def _metered_energy(
     counters: dict[str, dict[str, list[tuple[datetime, float]]]],
     key: str,
     window: tuple[datetime, datetime] | None = None,
+    kind: CounterKind = CounterKind.LIFETIME,
 ) -> float:
     """Bir sahanın sayaçtan okunan üretimi (kWh); sayaç yoksa 0.
 
     Cihazlar önce kendi içinde farklanır, sonra toplanır — sayaçları toplayıp
     farklamak, bir cihaz gün ortasında sıfırlandığında sahte bir düşüş üretirdi.
+
+    `kind` üreticinin sayaç semantiğidir ve **geçilmesi zorunlu gibi
+    davranılmalı**: varsayılan `LIFETIME`, günlük sıfırlanan sayaçta pencerenin
+    ilk okumasını taban sayıp o kadar enerjiyi düşürür (bkz. `CounterKind`).
     """
     total = 0.0
     for rows in counters.get(key, {}).values():
@@ -714,7 +734,7 @@ def _metered_energy(
             if window
             else rows
         )
-        total += counter_energy_kwh(scoped)
+        total += counter_energy_kwh(scoped, kind)
     return total
 
 
@@ -723,9 +743,19 @@ def _metered_or_integrated(
     curves: dict[str, dict[datetime, float]],
     lo: datetime,
     hi: datetime,
+    kinds: "Mapping[str, CounterKind] | None" = None,
 ) -> float:
-    """Gün toplamı: sayaç varsa ondan, yoksa güç eğrisinin integralinden."""
-    metered = sum(_metered_energy(counters, key, (lo, hi)) for key in counters)
+    """Gün toplamı: sayaç varsa ondan, yoksa güç eğrisinin integralinden.
+
+    `kinds` saha anahtarı → sayaç semantiği eşlemesidir. Tek bir değer
+    yetmiyor: bu fonksiyon genel bakış sayfasında birden çok tesisin sahalarını
+    aynı çağrıda topluyor ve tesisler farklı üreticilerde olabilir.
+    """
+    lookup = kinds or {}
+    metered = sum(
+        _metered_energy(counters, key, (lo, hi), lookup.get(key, CounterKind.LIFETIME))
+        for key in counters
+    )
     if metered > 0:
         return metered
     return sum(v for curve in curves.values() for ts, v in curve.items() if lo <= ts < hi) * 0.25
@@ -821,7 +851,9 @@ async def _load_plant_day(
                 # Sayaç varsa o kazanır: güç integrali, telemetri çekilemeyen
                 # her pencereyi üretimsiz sayar ve boşluk kadar eksik gösterir.
                 actual_kwh=round(
-                    _metered_energy(counters, entry.key) or energy_kwh(curve), 3
+                    _metered_energy(counters, entry.key, kind=entry.counter_kind)
+                    or energy_kwh(curve),
+                    3,
                 ),
                 expected_kwh=round(energy_kwh(twin), 3),
                 peak_kw=peak_kw(curve),
@@ -1643,9 +1675,9 @@ async def _render_inverter_detail(
     # Cihazın kendi sayacı esas alınır — tesis kartıyla aynı kaynak. Sayaç yoksa
     # ortalama güç × geçen süreye düşülür (sabit 0,25 ile çarpmak, 5 dakikalık
     # çekimde enerjiyi üçe katlardı).
-    energy_kwh = counter_energy_kwh(counters.get(device_id, [])) or _device_energy_kwh(
-        power_points
-    )
+    energy_kwh = counter_energy_kwh(
+        counters.get(device_id, []), counter_kind_for(plant.vendor)
+    ) or _device_energy_kwh(power_points)
 
     # Sağlık rozeti — plant_detail'daki mantıkla aynı, tek satır için
     rows = _build_inverter_rows([inverter])

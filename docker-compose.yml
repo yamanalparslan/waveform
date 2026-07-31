@@ -12,6 +12,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Depo servisleri de yeniden başlamalı. Uygulama servisleri
+    # (api/worker/beat) `unless-stopped` taşırken depoların taşımaması
+    # asimetrik bir arıza üretiyordu: Docker Desktop yeniden başladığında
+    # (WSL güncellemesi, host uykusu, bellek baskısı) postgres/influxdb/redis
+    # `Exited (255)` ile ölüp bir daha kalkmıyor, ama worker çekmeye devam edip
+    # her noktayı çöpe atıyordu. 31.07.2026'da tam bu oldu: panel günlük
+    # üretimi 32 kWh gösterdi, gerçek 2.679 kWh idi.
+    restart: unless-stopped
     # Port yayınlanmaz: veritabanına yalnızca compose ağındaki servisler erişir.
     # Dışarıdan bakmak için: docker compose exec postgres psql -U luminmind
     # (Geliştirme aracıyla bağlanmak isterseniz compose.override ile
@@ -33,6 +41,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
     # Influx arayüzü admin token'ı taşır; internete açık makinede yayınlanmaz.
 
   redis:
@@ -42,6 +51,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
     # Redis'in kimlik doğrulaması yok; yayınlanırsa kuyruk herkese açılır.
 
   # Tek seferlik kurulum: migration + Influx bucket'ları + seed

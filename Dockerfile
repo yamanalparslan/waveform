@@ -1,7 +1,13 @@
 FROM python:3.12-slim AS base
 
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+# pip'in varsayılan soket zaman aşımı 15 sn. pandas/scipy/numpy tekerlekleri
+# onlarca MB olduğu için yavaş ya da dalgalı bağlantıda indirme düzenli olarak
+# `ReadTimeoutError` ile düşüyor ve tüm derleme başarısız oluyor. Zaman aşımını
+# ve yeniden deneme sayısını yükseltmek bunu giderir; hızlı bağlantıda hiçbir
+# maliyeti yok (bekleme yalnızca hata durumunda devreye giriyor).
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=8
 
 COPY pyproject.toml README.md alembic.ini ./
 COPY src ./src
