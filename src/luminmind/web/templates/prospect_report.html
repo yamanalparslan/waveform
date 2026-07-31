@@ -76,8 +76,8 @@
 <div id="map-error" class="error">Harita kütüphanesi yüklenemedi.</div>
 <div id="map"></div>
 <div class="legend">
-  <span><i style="background:{{ palette['blue'] }}"></i>Panel ({{ report.module_count }})</span>
-  <span><i style="border:2px solid {{ palette['green'] }}; background:transparent"></i>Çatı sınırı</span>
+  <span><i style="background:#1e3a8a; border:1px solid #e2e8f0"></i>Panel ({{ report.module_count }})</span>
+  <span><i style="border:2px dashed #10b981; background:rgba(16,185,129,0.05)"></i>Çatı sınırı</span>
   {% if design.obstacles %}
   <span><i style="background:{{ palette['red'] }}"></i>Engel ({{ design.obstacles|length }})</span>
   {% endif %}
@@ -178,21 +178,22 @@
   const roof = {{ polygon_json | safe }};
   const obstacles = {{ obstacles_json | safe }};
 
-  const map = L.map('map');
+  const map = L.map('map', {maxZoom: 22});
   L.tileLayer({{ satellite_url | tojson }}, {
-    maxZoom: {{ satellite_max_zoom }},
+    maxNativeZoom: {{ satellite_max_zoom }},
+    maxZoom: 22,
     attribution: {{ satellite_attribution | tojson }}
   }).addTo(map);
 
-  const roofLayer = L.polygon(roof, {color: {{ palette["green"] | tojson }}, weight: 2,
-    fill: false}).addTo(map);
+  const roofLayer = L.polygon(roof, {color: '#10b981', weight: 3, dashArray: '5, 5',
+    fillOpacity: 0.05}).addTo(map);
 
   // Paneller 2D dikdörtgen olarak çizilir — üstten görünüş. Sayı yüzlerce
   // olabildiği için her panel ayrı katman yerine tek çok-parçalı poligon:
   // yüzlerce Leaflet katmanı sayfayı belirgin yavaşlatıyor.
   if (panels.length) {
-    L.polygon(panels, {color: {{ palette["blue"] | tojson }}, weight: 0.6,
-      fillOpacity: 0.85, fillColor: {{ palette["blue"] | tojson }}}).addTo(map);
+    L.polygon(panels, {color: '#e2e8f0', weight: 0.5,
+      fillOpacity: 0.95, fillColor: '#1e3a8a'}).addTo(map);
   }
   obstacles.forEach(function(ring){
     L.polygon(ring, {color: {{ palette["red"] | tojson }}, weight: 1.5,
