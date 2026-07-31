@@ -149,10 +149,18 @@ def _collect_warnings(
 
 def build_mounting(design: ProspectDesign, frame: LocalFrame) -> MountingSpec:
     """Tasarım kaydından montaj kısıtlarını kurar (engeller yerel çerçevede)."""
-    obstacles = tuple(
-        frame.ring_to_local([LatLon(lat=point[0], lon=point[1]) for point in ring])
-        for ring in (design.obstacles or [])
-    )
+    from luminmind.prospect.layout import Obstacle
+    obstacles = []
+    for obs_data in (design.obstacles or []):
+        if isinstance(obs_data, dict) and "polygon" in obs_data:
+            points = obs_data["polygon"]
+            height = obs_data.get("height", 0.0)
+        else:
+            points = obs_data
+            height = 0.0
+        local_ring = frame.ring_to_local([LatLon(lat=p[0], lon=p[1]) for p in points])
+        obstacles.append(Obstacle(polygon=local_ring, height_m=height))
+    obstacles = tuple(obstacles)
     return MountingSpec(
         mount=MountType(design.mount_type),
         tilt_deg=design.tilt_deg,

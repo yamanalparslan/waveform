@@ -466,6 +466,7 @@ def run_chain(
     soiling: pd.Series | None = None,
     stamp: IrradianceStamp = IrradianceStamp.INTERVAL_END,
     interval: timedelta = timedelta(minutes=15),
+    external_shading: pd.Series | None = None,
 ) -> ChainResult:
     """Tek dizi için tüm zinciri çalıştırır.
 
@@ -517,9 +518,17 @@ def run_chain(
     ) * spectral * soiling_series
     effective = effective.clip(lower=0.0)
 
+    usable = day & valid
+
+    if external_shading is not None:
+        ext_shading = external_shading.reindex(index).fillna(0.0).clip(0.0, 1.0)
+        effective = effective * (1.0 - ext_shading)
+        shaded_out = np.maximum(poa["shaded_fraction"].where(usable, 0.0), ext_shading.where(usable, 0.0))
+    else:
+        shaded_out = poa["shaded_fraction"].where(usable, 0.0)
+
     cell_temp = cell_temperature(array, poa["poa_global"], temp_air, wind, interval)
 
-    usable = day & valid
     effective = effective.where(usable, 0.0)
 
     dc_potential = dc_power(array, effective, cell_temp, dc_factor)
@@ -534,7 +543,7 @@ def run_chain(
         effective_irradiance=effective,
         cell_temp_c=cell_temp,
         soiling_ratio=soiling_series,
-        shaded_fraction=poa["shaded_fraction"].where(usable, 0.0),
+        shaded_fraction=shaded_out,
         daytime=day,
         irradiance_valid=valid,
     )

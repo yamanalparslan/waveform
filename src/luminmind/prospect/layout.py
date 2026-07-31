@@ -134,6 +134,12 @@ class InverterSpec:
 
 
 @dataclass(frozen=True)
+class Obstacle:
+    """3D Engel — Harita üzerinde bir poligon ve yükseklik."""
+    polygon: Ring
+    height_m: float = 0.0
+
+@dataclass(frozen=True)
 class MountingSpec:
     """Montaj ve yerleşim kısıtları."""
 
@@ -146,7 +152,7 @@ class MountingSpec:
     row_gap_m: float = 0.02  # yalnızca çatıya paralel montajda sıra arası
     ground_clearance_m: float = 0.5
     albedo: float = 0.20
-    obstacles: tuple[Ring, ...] = ()  # baca, çatı penceresi, klima ünitesi
+    obstacles: tuple[Obstacle, ...] = ()  # baca, çatı penceresi, klima ünitesi
     obstacle_clearance_m: float = 0.5
     # Sıra aralığı elle verilirse gölgeleme ölçütü atlanır (EPC'nin kendi
     # kızak sisteminin sabit adımı olabilir).
@@ -531,11 +537,11 @@ def _accepts(
         return False
 
     for obstacle in mounting.obstacles:
-        if distance_point_to_ring(center, obstacle) > (
+        if distance_point_to_ring(center, obstacle.polygon) > (
             half_diagonal + mounting.obstacle_clearance_m
-        ) and not point_in_ring(center, obstacle):
+        ) and not point_in_ring(center, obstacle.polygon):
             continue  # engelden yeterince uzak
-        if not rect_clears_obstacle(rect, obstacle, mounting.obstacle_clearance_m):
+        if not rect_clears_obstacle(rect, obstacle.polygon, mounting.obstacle_clearance_m):
             return False
     return True
 

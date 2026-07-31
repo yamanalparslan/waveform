@@ -29,6 +29,7 @@ from luminmind.config import Settings, get_settings
 from luminmind.core.models.auth import User
 from luminmind.core.models.prospect import ProspectDesign, ProspectReport, ProspectStatus
 from luminmind.prospect.finance import CostModel, FinanceParams, RevenueModel
+from luminmind.prospect.catalog import MODULE_CATALOG, INVERTER_CATALOG
 from luminmind.prospect.layout import InverterSpec, ModuleSpec
 from luminmind.prospect.service import analyse, to_report
 from luminmind.web.routes import (
@@ -196,6 +197,8 @@ async def prospect_new(
             "mount_choices": MOUNT_CHOICES,
             "azimuth_choices": AZIMUTH_CHOICES,
             "equipment": _equipment_defaults(),
+            "module_catalog": MODULE_CATALOG,
+            "inverter_catalog": INVERTER_CATALOG,
             "cost": CostModel(),
             "revenue": RevenueModel(),
             "params": FinanceParams(),
@@ -211,13 +214,15 @@ async def prospect_create(
     user: Annotated[User, Depends(get_web_user)],
     name: Annotated[str, Form()],
     polygon: Annotated[str, Form()],
+    module_id: Annotated[str, Form()] = "generic_580_topcon",
+    inverter_id: Annotated[str, Form()] = "generic_100kw",
     mount_type: Annotated[str, Form()] = "rooftop_tilted",
     tilt_deg: Annotated[float, Form()] = 15.0,
     azimuth_deg: Annotated[float, Form()] = 180.0,
     setback_m: Annotated[float, Form()] = 0.6,
     customer: Annotated[str, Form()] = "",
     obstacles: Annotated[str, Form()] = "[]",
-    capex_per_kwp_try: Annotated[float, Form()] = 18_000.0,
+    capex_per_wp_try: Annotated[float, Form()] = 18.0,
     retail_tariff_try_kwh: Annotated[float, Form()] = 3.40,
     export_tariff_try_kwh: Annotated[float, Form()] = 1.60,
     self_consumption_share: Annotated[float, Form()] = 0.75,
@@ -229,8 +234,13 @@ async def prospect_create(
     ~4 s. Celery'ye taşınması gereken bir süre değil ama kullanıcı bekliyor;
     sayfa "hesaplanıyor" göstergesiyle gönderiliyor (bkz. prospect_new.html).
     """
+    from dataclasses import asdict
+    
     points = _parse_polygon(polygon)
     latitude, longitude = _centroid(points)
+    
+    module_spec_dict = asdict(MODULE_CATALOG.get(module_id, MODULE_CATALOG["generic_580_topcon"])["spec"])
+    inverter_spec_dict = asdict(INVERTER_CATALOG.get(inverter_id, INVERTER_CATALOG["generic_100kw"])["spec"])
 
     design = ProspectDesign(
         owner_id=user.id,
@@ -245,8 +255,8 @@ async def prospect_create(
         tilt_deg=tilt_deg,
         azimuth_deg=azimuth_deg,
         setback_m=setback_m,
-        module_spec={},
-        inverter_spec={},
+        module_spec=module_spec_dict,
+        inverter_spec=inverter_spec_dict,
     )
     session.add(design)
     await session.flush()
@@ -254,7 +264,7 @@ async def prospect_create(
     try:
         analysis = await analyse(
             design,
-            costs=CostModel(capex_per_kwp_try=capex_per_kwp_try),
+            costs=CostModel(capex_per_kwp_try=capex_per_wp_try * 1000.0),
             revenue=RevenueModel(
                 retail_tariff_try_kwh=retail_tariff_try_kwh,
                 export_tariff_try_kwh=export_tariff_try_kwh,

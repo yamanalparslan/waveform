@@ -25,11 +25,23 @@
 </style>
 {% endblock %}
 {% block content %}
-<h1>{{ design.name }}</h1>
+<h1 style="display:flex; align-items:center; gap:12px;">
+  {{ design.name }}
+  {% if report.dc_capacity_kwp > 5000 %}
+    <span style="background:var(--red); color:white; font-size:12px; padding:3px 10px; border-radius:12px; font-weight:600; letter-spacing:0.3px;">Lisanslı Santral (>5 MW)</span>
+  {% elif report.dc_capacity_kwp <= 25 %}
+    <span style="background:var(--green); color:white; font-size:12px; padding:3px 10px; border-radius:12px; font-weight:600; letter-spacing:0.3px;">Mesken (Ev Tipi)</span>
+  {% else %}
+    <span style="background:var(--blue); color:white; font-size:12px; padding:3px 10px; border-radius:12px; font-weight:600; letter-spacing:0.3px;">Ticari / Endüstriyel (Lisanssız)</span>
+  {% endif %}
+</h1>
 <p class="sub">
   {% if design.customer %}{{ design.customer }} · {% endif %}
   {{ "%.5f"|format(design.latitude) }}, {{ "%.5f"|format(design.longitude) }} ·
   {{ report.computed_at.strftime('%d.%m.%Y %H:%M') }} tarihli hesap
+</p>
+<p class="sub" style="margin-top: 4px;">
+  <b>Seçilen Ekipman:</b> {{ design.module_spec.get("name", "Jenerik Panel") }} · {{ design.inverter_spec.get("name", "Jenerik İnvertör") }}
 </p>
 
 {% if report.warnings %}
@@ -195,9 +207,14 @@
     L.polygon(panels, {color: '#e2e8f0', weight: 0.5,
       fillOpacity: 0.95, fillColor: '#1e3a8a'}).addTo(map);
   }
-  obstacles.forEach(function(ring){
-    L.polygon(ring, {color: {{ palette["red"] | tojson }}, weight: 1.5,
+  obstacles.forEach(function(obs){
+    let ring = obs.polygon || obs; // Backward compatibility
+    let height = obs.height || 0;
+    let obsLayer = L.polygon(ring, {color: {{ palette["red"] | tojson }}, weight: 1.5,
       fillOpacity: 0.5}).addTo(map);
+    if (height > 0) {
+      obsLayer.bindTooltip(height + " m", {permanent: true, direction: "center", className: "bg-transparent border-0 text-white font-bold shadow-none text-xs"}).openTooltip();
+    }
   });
 
   map.fitBounds(roofLayer.getBounds().pad(0.15));

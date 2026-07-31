@@ -85,9 +85,9 @@ geri ödeme hesaplanacak.</p>
 <h2>Fizibilite varsayımları</h2>
 <div class="card grid-2">
   <div class="field">
-    <label for="f-capex">Yatırım (₺/kWp)</label>
-    <input id="f-capex" name="capex_per_kwp_try" type="number" step="100"
-           value="{{ cost.capex_per_kwp_try | round | int }}">
+    <label for="f-capex">Yatırım (₺/Wp)</label>
+    <input id="f-capex" name="capex_per_wp_try" type="number" step="0.1"
+           value="{{ (cost.capex_per_kwp_try / 1000) | round(2) }}">
   </div>
   <div class="field">
     <label for="f-retail">Perakende tarife (₺/kWh)</label>
@@ -110,11 +110,27 @@ geri ödeme hesaplanacak.</p>
            value="{{ params.discount_rate_real }}">
   </div>
 </div>
+<h2>Ekipman Seçimi</h2>
+<div class="card grid-2" style="margin-bottom:12px;">
+  <div class="field">
+    <label for="f-module">Panel Seçimi</label>
+    <select name="module_id" id="f-module" onchange="updateCapex()">
+      {% for mod_id, mod_info in module_catalog.items() %}
+      <option value="{{ mod_id }}" data-capex="{{ mod_info.base_capex_wp_try }}">{{ mod_info.label }} ({{ mod_info.spec.pdc0_w | round | int }}W)</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-inverter">İnvertör Seçimi</label>
+    <select name="inverter_id" id="f-inverter">
+      {% for inv_id, inv_info in inverter_catalog.items() %}
+      <option value="{{ inv_id }}">{{ inv_info.label }} ({{ inv_info.spec.ac_kw | round | int }}kW)</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
 <p class="sub" style="margin-top:8px">
-  Ekipman: <b>{{ equipment.module_name }}</b> ({{ equipment.module_w | round | int }} W,
-  {{ equipment.module_size }}) · <b>{{ equipment.inverter_name }}</b>
-  ({{ equipment.inverter_kw | round | int }} kW). Model reel çalışır: enflasyon hiçbir yere
-  girmez, tarife artışı enflasyon <i>üstü</i> olarak alınır.
+  Seçtiğiniz panel tipine göre referans yatırım maliyeti (₺/Wp) güncellenmektedir. Finansal model reel çalışır: enflasyon hiçbir yere girmez, tarife artışı enflasyon <i>üstü</i> olarak alınır.
 </p>
 
 <input type="hidden" name="polygon" id="f-polygon" value="">
@@ -134,6 +150,19 @@ geri ödeme hesaplanacak.</p>
   onerror="document.getElementById('map-error').style.display='block';
     document.getElementById('map').style.display='none'"></script>
 <script>
+function updateCapex() {
+  const moduleSelect = document.getElementById('f-module');
+  const selectedOption = moduleSelect.options[moduleSelect.selectedIndex];
+  const capex = selectedOption.getAttribute('data-capex');
+  if (capex) {
+    document.getElementById('f-capex').value = capex;
+  }
+}
+
+// Initial update on page load if default value is empty or you just want to sync it.
+// We'll trust the user's initial render value for now, but uncomment to force sync on load:
+// window.addEventListener('DOMContentLoaded', updateCapex);
+
 (function(){
   if (typeof L === 'undefined') {
     document.getElementById('map-error').style.display = 'block';
@@ -238,9 +267,17 @@ geri ödeme hesaplanacak.</p>
       roofLayer = L.polygon(roof, {color: COLOR_ROOF, weight: 2, fillOpacity: 0.20}).addTo(map);
       map.fitBounds(roofLayer.getBounds().pad(0.25));
     } else {
-      obstacles.push(current.slice());
-      obstacleLayers.push(L.polygon(current, {color: COLOR_OBSTACLE, weight: 2,
-        fillOpacity: 0.35}).addTo(map));
+      let heightStr = prompt("Engelin yüksekliğini giriniz (metre):", "2.0");
+      if (heightStr === null) return; // İptal edilirse engeli ekleme
+      let h = parseFloat(heightStr);
+      if (isNaN(h) || h < 0) h = 0.0;
+      
+      obstacles.push({polygon: current.slice(), height: h});
+      let obsLayer = L.polygon(current, {color: COLOR_OBSTACLE, weight: 2, fillOpacity: 0.35}).addTo(map);
+      if (h > 0) {
+        obsLayer.bindTooltip(h + " m", {permanent: true, direction: "center", className: "bg-transparent border-0 text-white font-bold shadow-none text-xs"}).openTooltip();
+      }
+      obstacleLayers.push(obsLayer);
     }
     current = [];
     mode = null;

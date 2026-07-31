@@ -297,6 +297,60 @@ def _project_lifetime(
     return tuple(projections)
 
 
+def compute_external_shading(
+    layout: LayoutResult,
+    tmy: TmyDataset,
+) -> pd.Series | None:
+    """3B engellerin yüksekliğine ve güneş açısına göre kaba gölge oranı hesaplar.
+    
+    Gerçek 3B ışın izleme (raycasting) yerine, her saatin güneş yüksekliği (zenith)
+    üzerinden engelin gölge alanını tahmin eder ve toplam PV alanına böler.
+    """
+    import numpy as np
+    from pvlib.solarposition import get_solarposition
+    from luminmind.prospect.geometry import polygon_area_m2
+
+    obstacles = layout.mounting.obstacles
+    if not any(obs.height_m > 0 for obs in obstacles):
+        return None
+
+    # Yaklaşık PV alanı (m²) — %21 verim varsayımı (1 kWp ≈ 4.76 m²)
+    array_area = layout.dc_capacity_kwp / 0.21
+    if array_area <= 0:
+        return None
+
+    index = pd.DatetimeIndex(tmy.weather.index)
+    solpos = get_solarposition(
+        index,
+        tmy.site.latitude,
+        tmy.site.longitude,
+        tmy.site.altitude_m,
+    )
+    
+    zenith = solpos["apparent_zenith"].values
+    # Güneş çok alçakken (zenith > 85) gölge boyu sonsuza gider; 85'te kesiyoruz (tan(85) ≈ 11.4)
+    z_rad = np.radians(np.clip(zenith, 0, 85.0))
+    tan_z = np.tan(z_rad)
+    
+    total_shaded_area = np.zeros(len(index))
+    
+    for obs in obstacles:
+        if obs.height_m <= 0:
+            continue
+        # Engelin etkin genişliği olarak alanının karekökü (yaklaşık bir küp/prizma varsayımı)
+        obs_area = polygon_area_m2(obs.polygon)
+        width = math.sqrt(obs_area) if obs_area > 0 else 1.0
+        
+        shadow_length = obs.height_m * tan_z
+        total_shaded_area += width * shadow_length
+
+    shaded_fraction = total_shaded_area / array_area
+    shaded_fraction = np.clip(shaded_fraction, 0.0, 1.0)
+    shaded_fraction[zenith > 89.0] = 0.0
+    
+    return pd.Series(shaded_fraction, index=index)
+
+
 def simulate(
     tmy: TmyDataset,
     layout: LayoutResult,
@@ -306,7 +360,7 @@ def simulate(
     annual_degradation: float = DEFAULT_ANNUAL_DEGRADATION,
 ) -> SimulationResult:
     """Yerleşim + TMY → yıllık üretim, göstergeler, kayıp şelalesi ve projeksiyon.
-
+    
     `losses` verilmezse PVWatts tipik saha değerleri kullanılır — kurulmamış
     santralde kalibrasyon yok, bu yüzden kayıp varsayımları raporda açıkça
     gösterilmeli (`LossChain` alanları birebir yazdırılabilir).
@@ -314,6 +368,8 @@ def simulate(
     losses = losses or LossChain()
     uncertainty = uncertainty or YieldUncertainty()
     array = layout.to_array_config()
+
+    ext_shading = compute_external_shading(layout, tmy)
 
     # PVGIS indeksi ışınımın temsil ettiği andır (bkz. prospect.pvgis) — bu
     # yüzden aralık ortası düzeltmesi *yapılmaz*, damga anlıktır.
@@ -324,6 +380,7 @@ def simulate(
         losses=losses,
         stamp=IrradianceStamp.INSTANT,
         interval=TMY_INTERVAL,
+        external_shading=ext_shading,
     )
 
     year_one = _energy_kwh(chain.ac_w)
