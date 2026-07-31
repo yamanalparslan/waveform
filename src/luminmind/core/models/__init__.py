@@ -10,6 +10,11 @@ from luminmind.core.models.plant import (
     TwinCalibration,
     VendorCredential,
 )
+from luminmind.core.models.prospect import (
+    ProspectDesign,
+    ProspectReport,
+    ProspectStatus,
+)
 
 __all__ = [
     "AnomalyEvent",
@@ -19,6 +24,9 @@ __all__ = [
     "BatterySystem",
     "Inverter",
     "Plant",
+    "ProspectDesign",
+    "ProspectReport",
+    "ProspectStatus",
     "PvArray",
     "Site",
     "TwinCalibration",

@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+{% block title %}Yeni fizibilite{% endblock %}
+{% block crumbs %}<a href="/ui/fizibilite">Fizibilite</a><span class="sep">›</span><b>Yeni</b>{% endblock %}
+{% block head %}
+{% with map_height = 520 %}{% include "_leaflet_head.html" %}{% endwith %}
+<style>
+/* Çizim modunda imleç artı olsun — tıklamanın köşe eklediği belli olmalı */
+#map.drawing{cursor:crosshair}
+.draw-bar{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px}
+.draw-hint{font-size:13px; color:var(--text-dim)}
+.metric-inline{display:flex; gap:18px; flex-wrap:wrap; margin-top:12px; font-size:13px}
+.metric-inline b{font-variant-numeric:tabular-nums}
+.grid-2{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px}
+.field label{display:block; font-size:12px; color:var(--text-dim); margin-bottom:4px}
+.field input,.field select{width:100%}
+#busy{display:none}
+</style>
+{% endblock %}
+{% block content %}
+<h1>Yeni fizibilite</h1>
+<p class="sub">Çatı veya araziyi uydu görüntüsü üzerine çizin — panel yerleşimi, üretim ve
+geri ödeme hesaplanacak.</p>
+
+<div id="map-error" class="error">
+  Harita kütüphanesi yüklenemedi. Ağ yöneticinize <code>unpkg.com</code> ve uydu görüntüsü
+  sağlayıcısının adresine izin verilmesini iletin.
+</div>
+
+<form method="post" action="/ui/fizibilite" id="form">
+<div class="card">
+  <div class="draw-bar">
+    <button type="button" id="btn-draw" class="primary">Çatıyı çiz</button>
+    <button type="button" id="btn-obstacle">Engel ekle (baca, pencere)</button>
+    <button type="button" id="btn-undo">Son köşeyi geri al</button>
+    <button type="button" id="btn-clear">Temizle</button>
+    <span class="draw-hint" id="hint">Haritada arama yapıp çatıya yaklaşın, ardından
+      “Çatıyı çiz”e basıp köşelere tıklayın. Çift tıklama şekli kapatır.</span>
+  </div>
+  <div id="map"></div>
+  <div class="metric-inline">
+    <span>Alan: <b id="m-area">—</b></span>
+    <span>Köşe: <b id="m-vertices">0</b></span>
+    <span>Engel: <b id="m-obstacles">0</b></span>
+    <span>Merkez: <b id="m-center">—</b></span>
+  </div>
+</div>
+
+<h2>Montaj</h2>
+<div class="card grid-2">
+  <div class="field">
+    <label for="f-name">Proje adı</label>
+    <input id="f-name" name="name" required placeholder="ör. Acme Fabrika çatı GES">
+  </div>
+  <div class="field">
+    <label for="f-customer">Müşteri (opsiyonel)</label>
+    <input id="f-customer" name="customer" placeholder="ör. Acme Sanayi A.Ş.">
+  </div>
+  <div class="field">
+    <label for="f-mount">Montaj tipi</label>
+    <select id="f-mount" name="mount_type">
+      {% for value, label in mount_choices %}
+      <option value="{{ value }}">{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-tilt">Eğim (°)</label>
+    <input id="f-tilt" name="tilt_deg" type="number" step="1" min="0" max="60" value="15">
+  </div>
+  <div class="field">
+    <label for="f-azimuth">Yön</label>
+    <select id="f-azimuth" name="azimuth_deg">
+      {% for value, label in azimuth_choices %}
+      <option value="{{ value }}" {{ 'selected' if value == 180.0 }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-setback">Kenar mesafesi (m)</label>
+    <input id="f-setback" name="setback_m" type="number" step="0.1" min="0" max="5" value="0.6">
+  </div>
+</div>
+
+<h2>Fizibilite varsayımları</h2>
+<div class="card grid-2">
+  <div class="field">
+    <label for="f-capex">Yatırım (₺/kWp)</label>
+    <input id="f-capex" name="capex_per_kwp_try" type="number" step="100"
+           value="{{ cost.capex_per_kwp_try | round | int }}">
+  </div>
+  <div class="field">
+    <label for="f-retail">Perakende tarife (₺/kWh)</label>
+    <input id="f-retail" name="retail_tariff_try_kwh" type="number" step="0.01"
+           value="{{ revenue.retail_tariff_try_kwh }}">
+  </div>
+  <div class="field">
+    <label for="f-export">Şebekeye satış (₺/kWh)</label>
+    <input id="f-export" name="export_tariff_try_kwh" type="number" step="0.01"
+           value="{{ revenue.export_tariff_try_kwh }}">
+  </div>
+  <div class="field">
+    <label for="f-share">Öztüketim payı (0–1)</label>
+    <input id="f-share" name="self_consumption_share" type="number" step="0.05" min="0" max="1"
+           value="{{ revenue.self_consumption_share }}">
+  </div>
+  <div class="field">
+    <label for="f-discount">Reel iskonto oranı</label>
+    <input id="f-discount" name="discount_rate_real" type="number" step="0.01" min="0" max="1"
+           value="{{ params.discount_rate_real }}">
+  </div>
+</div>
+<p class="sub" style="margin-top:8px">
+  Ekipman: <b>{{ equipment.module_name }}</b> ({{ equipment.module_w | round | int }} W,
+  {{ equipment.module_size }}) · <b>{{ equipment.inverter_name }}</b>
+  ({{ equipment.inverter_kw | round | int }} kW). Model reel çalışır: enflasyon hiçbir yere
+  girmez, tarife artışı enflasyon <i>üstü</i> olarak alınır.
+</p>
+
+<input type="hidden" name="polygon" id="f-polygon" value="">
+<input type="hidden" name="obstacles" id="f-obstacles" value="[]">
+
+<div class="row-inline" style="margin-top:18px; gap:12px; align-items:center">
+  <button type="submit" class="primary" id="btn-submit" disabled>Fizibiliteyi hesapla</button>
+  <span id="busy" class="chip info">Hesaplanıyor — TMY verisi çekiliyor, 8760 saat
+    simüle ediliyor (10–15 sn)</span>
+  <span class="draw-hint" id="submit-hint">Önce çatıyı çizin</span>
+</div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  onerror="document.getElementById('map-error').style.display='block';
+    document.getElementById('map').style.display='none'"></script>
+<script>
+(function(){
+  if (typeof L === 'undefined') {
+    document.getElementById('map-error').style.display = 'block';
+    document.getElementById('map').style.display = 'none';
+    return;
+  }
+  const map = L.map('map').setView([39.0, 35.2], 6);
+  // Uydu katmanı: çatı sınırı sokak haritasında görünmez. Yüklenemezse
+  // OSM'e düşülür — çizim yine yapılabilir, sadece görüntü kabalaşır.
+  const sat = L.tileLayer({{ satellite_url | tojson }}, {
+    maxZoom: {{ satellite_max_zoom }},
+    attribution: {{ satellite_attribution | tojson }}
+  });
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {maxZoom: 19, attribution: '© OpenStreetMap'});
+  let satErrors = 0;
+  sat.on('tileerror', function(){ if (++satErrors === 4) { map.removeLayer(sat); osm.addTo(map); } });
+  sat.addTo(map);
+
+  const COLOR_ROOF = {{ palette["blue"] | tojson }};
+  const COLOR_OBSTACLE = {{ palette["red"] | tojson }};
+  // Köşe noktasının kenar rengi: CSS değişkeni SVG özniteliğinde güvenilir
+  // çalışmadığı için değer sunucuda paletten gömülür (bkz. _leaflet_script.html).
+  const COLOR_VERTEX_EDGE = {{ palette["surface"] | tojson }};
+
+  // --- Durum ---
+  // mode: null | 'roof' | 'obstacle'
+  let mode = null;
+  let roof = [];                 // [[lat, lon], …]
+  let obstacles = [];            // [[[lat, lon], …], …]
+  let current = [];              // çizilmekte olan halka
+  let roofLayer = null, currentLayer = null;
+  const obstacleLayers = [];
+  const vertexMarkers = [];
+
+  const el = id => document.getElementById(id);
+
+  function areaOf(ring) {
+    // Yerel teğet düzlemde ayakkabı bağı — sunucudaki LocalFrame ile aynı
+    // yaklaşım (WGS84 eğrilik yarıçapları). Burada yalnızca kullanıcıya anlık
+    // geri bildirim için; kayda giren alanı sunucu yeniden hesaplar.
+    if (ring.length < 3) return 0;
+    const lat0 = ring.reduce((s, p) => s + p[0], 0) / ring.length;
+    const phi = lat0 * Math.PI / 180;
+    const a = 6378137.0, e2 = 0.00669437999014;
+    const w = 1 - e2 * Math.sin(phi) ** 2;
+    const mLat = a * (1 - e2) / Math.pow(w, 1.5) * Math.PI / 180;
+    const mLon = a / Math.sqrt(w) * Math.cos(phi) * Math.PI / 180;
+    const lon0 = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+    const pts = ring.map(p => [(p[1] - lon0) * mLon, (p[0] - lat0) * mLat]);
+    let total = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+      total += x1 * y2 - x2 * y1;
+    }
+    return Math.abs(total / 2);
+  }
+
+  function redraw() {
+    if (currentLayer) { map.removeLayer(currentLayer); currentLayer = null; }
+    vertexMarkers.forEach(m => map.removeLayer(m));
+    vertexMarkers.length = 0;
+
+    if (current.length > 0) {
+      const color = mode === 'obstacle' ? COLOR_OBSTACLE : COLOR_ROOF;
+      currentLayer = (current.length > 2 ? L.polygon(current, {color: color, weight: 2,
+        fillOpacity: 0.18, dashArray: '5,4'}) : L.polyline(current, {color: color, weight: 2,
+        dashArray: '5,4'})).addTo(map);
+      current.forEach(p => vertexMarkers.push(
+        L.circleMarker(p, {radius: 4, color: COLOR_VERTEX_EDGE, weight: 2, fillColor: color,
+          fillOpacity: 1}).addTo(map)));
+    }
+    refreshMetrics();
+  }
+
+  function refreshMetrics() {
+    const ring = roof.length >= 3 ? roof : current;
+    const area = areaOf(ring);
+    el('m-area').textContent = area > 0 ? area.toLocaleString('tr-TR',
+      {maximumFractionDigits: 0}) + ' m²' : '—';
+    el('m-vertices').textContent = (roof.length >= 3 ? roof.length : current.length);
+    el('m-obstacles').textContent = obstacles.length;
+    if (roof.length >= 3) {
+      const lat = roof.reduce((s, p) => s + p[0], 0) / roof.length;
+      const lon = roof.reduce((s, p) => s + p[1], 0) / roof.length;
+      el('m-center').textContent = lat.toFixed(5) + ', ' + lon.toFixed(5);
+    } else {
+      el('m-center').textContent = '—';
+    }
+    const ready = roof.length >= 3;
+    el('btn-submit').disabled = !ready;
+    el('submit-hint').textContent = ready ? '' : 'Önce çatıyı çizin';
+    el('f-polygon').value = JSON.stringify(roof);
+    el('f-obstacles').value = JSON.stringify(obstacles);
+  }
+
+  function finishShape() {
+    if (current.length < 3) return;
+    if (mode === 'roof') {
+      roof = current.slice();
+      if (roofLayer) map.removeLayer(roofLayer);
+      roofLayer = L.polygon(roof, {color: COLOR_ROOF, weight: 2, fillOpacity: 0.20}).addTo(map);
+      map.fitBounds(roofLayer.getBounds().pad(0.25));
+    } else {
+      obstacles.push(current.slice());
+      obstacleLayers.push(L.polygon(current, {color: COLOR_OBSTACLE, weight: 2,
+        fillOpacity: 0.35}).addTo(map));
+    }
+    current = [];
+    mode = null;
+    el('map').classList.remove('drawing');
+    el('hint').textContent = roof.length >= 3
+      ? 'Çatı hazır. İsterseniz engel ekleyin, sonra hesaplayın.'
+      : 'Çatıyı çizmek için “Çatıyı çiz”e basın.';
+    redraw();
+  }
+
+  map.on('click', function(e){
+    if (!mode) return;
+    current.push([e.latlng.lat, e.latlng.lng]);
+    redraw();
+  });
+  // Çift tıklama şekli kapatır; Leaflet'in yakınlaştırmasını bastırıyoruz
+  // yoksa kapatma hareketi aynı anda haritayı zıplatır.
+  map.doubleClickZoom.disable();
+  map.on('dblclick', finishShape);
+
+  el('btn-draw').onclick = function(){
+    mode = 'roof'; current = [];
+    if (roofLayer) { map.removeLayer(roofLayer); roofLayer = null; }
+    roof = [];
+    el('map').classList.add('drawing');
+    el('hint').textContent = 'Köşelere tıklayın, bitirmek için çift tıklayın.';
+    redraw();
+  };
+  el('btn-obstacle').onclick = function(){
+    if (roof.length < 3) { el('hint').textContent = 'Önce çatıyı çizin.'; return; }
+    mode = 'obstacle'; current = [];
+    el('map').classList.add('drawing');
+    el('hint').textContent = 'Engelin köşelerine tıklayın, çift tıklayarak kapatın.';
+    redraw();
+  };
+  el('btn-undo').onclick = function(){ current.pop(); redraw(); };
+  el('btn-clear').onclick = function(){
+    mode = null; current = []; roof = []; obstacles.length = 0;
+    if (roofLayer) { map.removeLayer(roofLayer); roofLayer = null; }
+    obstacleLayers.forEach(l => map.removeLayer(l));
+    obstacleLayers.length = 0;
+    el('map').classList.remove('drawing');
+    redraw();
+  };
+
+  // Gönderim uzun sürüyor (PVGIS + 8760 saat); kullanıcıya durum gösterip
+  // çift gönderimi engelliyoruz.
+  el('form').addEventListener('submit', function(){
+    el('btn-submit').disabled = true;
+    el('busy').style.display = 'inline-flex';
+    el('submit-hint').textContent = '';
+  });
+
+  setTimeout(function(){ map.invalidateSize(); }, 120);
+  window.addEventListener('resize', function(){ map.invalidateSize(); });
+  refreshMetrics();
+})();
+</script>
+{% endblock %}

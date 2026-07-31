@@ -33,6 +33,12 @@ class Plant(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
+    # Yaşam döngüsü: `operational` (kurulu, veri akıyor) | `prospect` (fizibilite
+    # aşamasında) | `construction` (kurulumda). İzleme sorgularının kurulmamış
+    # santralleri süzebilmesi için var. Varsayılan `operational`, çünkü bu alan
+    # eklenmeden önce kaydedilmiş her santral kuruludur — tersi varsayım mevcut
+    # tesisleri panelden düşürürdü.
+    status: Mapped[str] = mapped_column(String(20), default="operational", index=True)
     vendor: Mapped[str] = mapped_column(String(20))  # Vendor enum değeri
     vendor_plant_id: Mapped[str] = mapped_column(String(100))
     latitude: Mapped[float | None] = mapped_column(Float)

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Fizibilite{% endblock %}
+{% block crumbs %}<b>Fizibilite</b>{% endblock %}
+{% block content %}
+<div class="row-inline" style="justify-content:space-between; align-items:baseline">
+  <div>
+    <h1>Fizibilite</h1>
+    <p class="sub">Kurulmamış santrallerin verim ve geri ödeme analizi</p>
+  </div>
+  <a href="/ui/fizibilite/yeni" class="btn primary">Yeni fizibilite</a>
+</div>
+
+{% if designs %}
+<div class="card table-wrap">
+<table>
+  <tr>
+    <th>Proje</th><th>Müşteri</th>
+    <th class="num">Güç</th><th class="num">Üretim</th>
+    <th class="num">Geri ödeme</th><th class="num">NPV</th>
+    <th>Durum</th>
+  </tr>
+  {% for d in designs %}
+  {% set r = d.latest_report %}
+  <tr>
+    <td><a href="/ui/fizibilite/{{ d.id }}">{{ d.name }}</a></td>
+    <td>{{ d.customer or "—" }}</td>
+    <td class="num">{% if r %}{{ "%.1f"|format(r.dc_capacity_kwp) }} kWp{% else %}—{% endif %}</td>
+    <td class="num">{% if r %}{{ "%.0f"|format(r.year_one_kwh / 1000) }} MWh{% else %}—{% endif %}</td>
+    <td class="num">
+      {% if r and r.payback_years %}{{ "%.1f"|format(r.payback_years) }} yıl{% else %}—{% endif %}
+    </td>
+    <td class="num">
+      {% if r %}
+      <span style="color:{{ 'var(--green)' if r.npv_try > 0 else 'var(--red)' }}">
+        {{ "%.2f"|format(r.npv_try / 1000000) }} M₺</span>
+      {% else %}—{% endif %}
+    </td>
+    <td><span class="chip {{ 'ok' if d.status == 'analysed' else 'info' }}">{{ d.status }}</span></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<div class="card empty">
+  <div style="font-size:32px; opacity:.35; margin-bottom:10px">◱</div>
+  Henüz fizibilite çalışması yok.<br>
+  <a href="/ui/fizibilite/yeni">Çatı veya arazi çizerek başlayın →</a>
+</div>
+{% endif %}
+{% endblock %}

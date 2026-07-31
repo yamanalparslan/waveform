@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}{{ design.name }}{% endblock %}
+{% block crumbs %}<a href="/ui/fizibilite">Fizibilite</a><span class="sep">›</span><b>{{ design.name }}</b>{% endblock %}
+{% block head %}
+{% with map_height = 520 %}{% include "_leaflet_head.html" %}{% endwith %}
+<style>
+.kpi-row{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px}
+.kpi{padding:14px 16px; border:1px solid var(--line); border-radius:var(--r-md);
+  background:var(--surface)}
+.kpi .k{font-size:12px; color:var(--text-dim); margin-bottom:6px}
+.kpi .v{font-size:24px; font-weight:650; font-variant-numeric:tabular-nums; line-height:1.1}
+.kpi .u{font-size:12px; color:var(--text-faint); margin-top:4px}
+.kpi.good .v{color:var(--green)} .kpi.bad .v{color:var(--red)}
+.bars{display:flex; align-items:flex-end; gap:6px; height:150px; margin-top:6px}
+.bars .b{flex:1; display:flex; flex-direction:column; justify-content:flex-end;
+  align-items:center; gap:5px; height:100%}
+.bars .fill{width:100%; background:var(--blue); border-radius:3px 3px 0 0; min-height:2px}
+.bars .lb{font-size:11px; color:var(--text-faint)}
+.wf td.n{text-align:right; font-variant-numeric:tabular-nums}
+.wf .loss{color:var(--red)}
+.legend{display:flex; gap:16px; flex-wrap:wrap; font-size:13px; margin-top:12px}
+.legend i{display:inline-block; width:12px; height:12px; border-radius:2px;
+  margin-right:6px; vertical-align:-1px}
+</style>
+{% endblock %}
+{% block content %}
+<h1>{{ design.name }}</h1>
+<p class="sub">
+  {% if design.customer %}{{ design.customer }} · {% endif %}
+  {{ "%.5f"|format(design.latitude) }}, {{ "%.5f"|format(design.longitude) }} ·
+  {{ report.computed_at.strftime('%d.%m.%Y %H:%M') }} tarihli hesap
+</p>
+
+{% if report.warnings %}
+<div class="card" style="border-color:var(--amber)">
+  <b style="font-size:13px">Tasarım notları</b>
+  <ul style="margin:8px 0 0; padding-left:20px; font-size:13px; line-height:1.7">
+    {% for w in report.warnings %}<li>{{ w }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{# Sonuç önce: tesis sahibinin tek okumada anlaması gereken dört sayı #}
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="k">Kurulu güç</div>
+    <div class="v">{{ "%.1f"|format(report.dc_capacity_kwp) }}</div>
+    <div class="u">kWp · {{ report.module_count }} panel</div>
+  </div>
+  <div class="kpi">
+    <div class="k">Yıllık üretim</div>
+    <div class="v">{{ "%.0f"|format(report.year_one_kwh / 1000) }}</div>
+    <div class="u">MWh · {{ "%.0f"|format(report.specific_yield_kwh_kwp) }} kWh/kWp</div>
+  </div>
+  <div class="kpi {{ 'good' if report.payback_years and report.payback_years < 7 else '' }}">
+    <div class="k">Geri ödeme</div>
+    <div class="v">{% if report.payback_years %}{{ "%.1f"|format(report.payback_years) }}{% else %}—{% endif %}</div>
+    <div class="u">yıl</div>
+  </div>
+  <div class="kpi {{ 'good' if report.npv_try > 0 else 'bad' }}">
+    <div class="k">Net bugünkü değer</div>
+    <div class="v">{{ "%.2f"|format(report.npv_try / 1000000) }}</div>
+    <div class="u">milyon ₺ · {{ "%.2f"|format(report.capex_try / 1000000) }}M ₺ yatırım</div>
+  </div>
+  <div class="kpi">
+    <div class="k">Reel iç verim oranı</div>
+    <div class="v">{% if report.irr_real is not none %}{{ "%.1f"|format(report.irr_real * 100) }}%{% else %}—{% endif %}</div>
+    <div class="u">enflasyon üstü</div>
+  </div>
+</div>
+
+<h2>Panel yerleşimi</h2>
+<p class="sub">Üstten görünüş — {{ report.module_count }} panel,
+  {{ report.orientation }} yönelim, {{ "%.2f"|format(report.row_pitch_m) }} m sıra aralığı.</p>
+<div id="map-error" class="error">Harita kütüphanesi yüklenemedi.</div>
+<div id="map"></div>
+<div class="legend">
+  <span><i style="background:{{ palette['blue'] }}"></i>Panel ({{ report.module_count }})</span>
+  <span><i style="border:2px solid {{ palette['green'] }}; background:transparent"></i>Çatı sınırı</span>
+  {% if design.obstacles %}
+  <span><i style="background:{{ palette['red'] }}"></i>Engel ({{ design.obstacles|length }})</span>
+  {% endif %}
+  <span style="color:var(--text-faint)">Alan {{ "%.0f"|format(report.area_m2) }} m² ·
+    GCR {{ "%.2f"|format(report.gcr) }}</span>
+</div>
+
+<h2>Aylık üretim</h2>
+<div class="card">
+  <div class="bars">
+    {% for m in monthly %}
+    <div class="b" title="{{ m.label }}: {{ "%.1f"|format(m.kwh / 1000) }} MWh">
+      <div class="fill" style="height:{{ (m.share * 100) | round(1) }}%"></div>
+      <div class="lb">{{ m.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<h2>Enerji nereye gidiyor</h2>
+<div class="card table-wrap">
+<table class="wf">
+  <tr><th>Aşama</th><th class="n">Kalan</th><th class="n">Kayıp</th><th class="n">%</th></tr>
+  {% for s in report.waterfall %}
+  <tr>
+    <td>{{ s.label }}</td>
+    <td class="n">{{ "%.0f"|format(s.energy_kwh / 1000) }} MWh</td>
+    <td class="n loss">{% if s.loss_kwh > 0.5 %}−{{ "%.0f"|format(s.loss_kwh / 1000) }}{% else %}—{% endif %}</td>
+    <td class="n">{% if s.loss_pct > 0.01 %}{{ "%.1f"|format(s.loss_pct) }}{% else %}—{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+<details style="margin-top:18px">
+<summary style="cursor:pointer; font-weight:600">Teknik ayrıntı ve varsayımlar</summary>
+<div class="card" style="margin-top:12px">
+<table>
+  <tr><th colspan="2">Elektriksel tasarım</th></tr>
+  <tr><td>String</td><td>{{ report.strings }} × {{ report.modules_per_string }} modül</td></tr>
+  <tr><td>İnvertör</td><td>{{ report.inverter_count }} adet · toplam
+    {{ "%.0f"|format(report.ac_capacity_kw) }} kW AC</td></tr>
+  <tr><td>DC/AC oranı</td><td>{{ "%.2f"|format(report.dc_capacity_kwp / report.ac_capacity_kw) }}</td></tr>
+  <tr><th colspan="2">Işınım ve performans</th></tr>
+  <tr><td>Yatay ışınım (GHI)</td><td>{{ "%.0f"|format(report.ghi_kwh_m2) }} kWh/m²/yıl</td></tr>
+  <tr><td>Düzlem üstü ışınım (POA)</td><td>{{ "%.0f"|format(report.poa_kwh_m2) }} kWh/m²/yıl
+    ({{ "%+.1f"|format((report.poa_kwh_m2 / report.ghi_kwh_m2 - 1) * 100) }}%)</td></tr>
+  <tr><td>Performans oranı (IEC 61724)</td><td>{{ "%.3f"|format(report.performance_ratio) }}</td></tr>
+  <tr><th colspan="2">Belirsizlik ve ömür</th></tr>
+  <tr><td>P50 / P90 (yıl 1)</td><td>{{ "%.0f"|format(report.year_one_kwh / 1000) }} /
+    {{ "%.0f"|format(report.p90_year_one_kwh / 1000) }} MWh</td></tr>
+  <tr><td>25 yıl toplam</td><td>{{ "%.1f"|format(report.lifetime_kwh / 1000000) }} GWh</td></tr>
+  <tr><td>LCOE</td><td>{{ "%.3f"|format(report.lcoe_try_kwh) }} ₺/kWh</td></tr>
+  <tr><th colspan="2">Kaynak</th></tr>
+  <tr><td>Hava verisi</td><td>{{ report.data_provenance }}</td></tr>
+  <tr><td>Hesap sürümü</td><td>{{ report.engine_version }}</td></tr>
+</table>
+{% if report.assumptions %}
+<p class="sub" style="margin-top:12px">
+  Finans: {{ "%.2f"|format(report.assumptions.finance.blended_tariff_try_kwh) }} ₺/kWh
+  harmanlanmış tarife, %{{ (report.assumptions.finance.discount_rate_real * 100) | round | int }}
+  reel iskonto. Model reel kurulur — enflasyon hesaba girmez.
+</p>
+{% endif %}
+</div>
+</details>
+
+<h2>25 yıllık üretim</h2>
+<div class="card table-wrap">
+<table>
+  <tr><th>Yıl</th><th class="num">Üretim (MWh)</th><th class="num">Yıl 1'e oranla</th></tr>
+  {% for p in report.projection %}
+  {% if p.year in [1, 5, 10, 15, 20, 25] %}
+  <tr>
+    <td>{{ p.year }}</td>
+    <td class="num">{{ "%.0f"|format(p.energy_kwh / 1000) }}</td>
+    <td class="num">{{ "%.1f"|format(p.degradation_factor * 100) }}%</td>
+  </tr>
+  {% endif %}
+  {% endfor %}
+</table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  onerror="document.getElementById('map-error').style.display='block';
+    document.getElementById('map').style.display='none'"></script>
+<script>
+(function(){
+  if (typeof L === 'undefined') {
+    document.getElementById('map-error').style.display = 'block';
+    document.getElementById('map').style.display = 'none';
+    return;
+  }
+  const panels = {{ panels_json | safe }};
+  const roof = {{ polygon_json | safe }};
+  const obstacles = {{ obstacles_json | safe }};
+
+  const map = L.map('map');
+  L.tileLayer({{ satellite_url | tojson }}, {
+    maxZoom: {{ satellite_max_zoom }},
+    attribution: {{ satellite_attribution | tojson }}
+  }).addTo(map);
+
+  const roofLayer = L.polygon(roof, {color: {{ palette["green"] | tojson }}, weight: 2,
+    fill: false}).addTo(map);
+
+  // Paneller 2D dikdörtgen olarak çizilir — üstten görünüş. Sayı yüzlerce
+  // olabildiği için her panel ayrı katman yerine tek çok-parçalı poligon:
+  // yüzlerce Leaflet katmanı sayfayı belirgin yavaşlatıyor.
+  if (panels.length) {
+    L.polygon(panels, {color: {{ palette["blue"] | tojson }}, weight: 0.6,
+      fillOpacity: 0.85, fillColor: {{ palette["blue"] | tojson }}}).addTo(map);
+  }
+  obstacles.forEach(function(ring){
+    L.polygon(ring, {color: {{ palette["red"] | tojson }}, weight: 1.5,
+      fillOpacity: 0.5}).addTo(map);
+  });
+
+  map.fitBounds(roofLayer.getBounds().pad(0.15));
+  setTimeout(function(){ map.invalidateSize(); }, 120);
+  window.addEventListener('resize', function(){ map.invalidateSize(); });
+})();
+</script>
+{% endblock %}

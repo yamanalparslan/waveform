@@ -27,6 +27,7 @@ from luminmind.core.hardening import (
     enforce_production_settings,
 )
 from luminmind.core.influx import InfluxStore
+from luminmind.web.prospect_routes import router as prospect_web_router
 from luminmind.web.routes import RequiresLogin
 from luminmind.web.routes import router as web_router
 from luminmind.web.theme import STATIC_DIR
@@ -98,6 +99,9 @@ def create_app(
     app.include_router(anomalies.router, prefix=prefix)
     app.include_router(market.router, prefix=prefix)
     app.include_router(web_router)
+    # Fizibilite akışı ayrı router'da (routes.py 2500 satırı aştı); oturum ve
+    # şablon altyapısını web_router'dan devralıyor.
+    app.include_router(prospect_web_router)
 
     # Arayüz stilleri. Yol paketin içinden türetilir; `pyproject.toml`
     # içindeki `package-data` girdisi olmadan tekerlek/imaj bu dizini taşımaz

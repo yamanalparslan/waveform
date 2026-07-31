@@ -32,13 +32,20 @@ class MountType(StrEnum):
     """Montaj tipi — termal model ve sıra-arası gölgelenmeyi belirler."""
 
     FIXED_GROUND = "fixed_ground"  # sabit açılı arazi santrali (sıralı diziler)
-    ROOFTOP = "rooftop"  # çatı (yakın montaj, sıra gölgesi modellenmez)
+    ROOFTOP = "rooftop"  # eğimli çatıya paralel (yakın montaj, tek düzlem)
+    # Düz çatıya ballastlı açılı diziler. `ROOFTOP`'tan ayrı bir tip olması
+    # gerekiyor çünkü sıralar aralıklıdır ve birbirini gölgeler: `ROOFTOP` ile
+    # modellenirse sıra-arası gölgelenme hiç hesaplanmaz ve düz sanayi çatısı
+    # sistematik olarak iyimser çıkar. Termal olarak açık kasa gibi davranır
+    # (iki yüzü de havalanır), ama rüzgar kentsel sınır tabakasındadır.
+    ROOFTOP_TILTED = "rooftop_tilted"
     SINGLE_AXIS_TRACKER = "single_axis_tracker"  # tek eksenli izleyici
 
 
 _TEMPERATURE_MODEL_KEY = {
     MountType.FIXED_GROUND: "open_rack_glass_glass",
     MountType.ROOFTOP: "close_mount_glass_glass",
+    MountType.ROOFTOP_TILTED: "open_rack_glass_glass",
     MountType.SINGLE_AXIS_TRACKER: "open_rack_glass_glass",
 }
 
@@ -47,6 +54,7 @@ _TEMPERATURE_MODEL_KEY = {
 _WIND_EXPONENT = {
     MountType.FIXED_GROUND: 0.14,
     MountType.ROOFTOP: 0.25,
+    MountType.ROOFTOP_TILTED: 0.25,
     MountType.SINGLE_AXIS_TRACKER: 0.14,
 }
 
@@ -121,7 +129,12 @@ class ArrayConfig:
 
     @property
     def models_row_shading(self) -> bool:
-        """Çatı kurulumlarında sıra-arası gölgelenme modellenmez."""
+        """Yalnızca çatıya *paralel* montajda sıra-arası gölgelenme yoktur.
+
+        Eğimli çatıya yatırılan paneller tek düzlemdedir, birbirini gölgelemez.
+        Düz çatıya açılı kurulan diziler (`ROOFTOP_TILTED`) ise araziyle aynı
+        geometriye sahiptir ve gölgelenir.
+        """
         return self.mount is not MountType.ROOFTOP
 
     @property

@@ -114,6 +114,21 @@ class Settings(BaseSettings):
     lm_use_mock_prices: bool = True
     epias_base_url: str = ""
 
+    # --- Kurulum öncesi fizibilite ---
+    # Çatı poligonu uydu görüntüsünün üzerine çizilir; sokak haritasında çatı
+    # sınırı görünmediği için ayrı bir tile katmanı gerekiyor. Varsayılan Esri
+    # World Imagery: anahtar istemiyor ve Türkiye'yi yüksek çözünürlükte kapsıyor.
+    #
+    # LİSANS UYARISI: bu uç noktayı ticari bir SaaS içinde kullanmak atıf
+    # dışında abonelik gerektirebilir. Ayar olarak duruyor ki lisans netleşince
+    # (ya da Mapbox/Bing anahtarı alınınca) kod değişmeden değiştirilebilsin.
+    lm_satellite_tile_url: str = (
+        "https://server.arcgisonline.com/ArcGIS/rest/services/"
+        "World_Imagery/MapServer/tile/{z}/{y}/{x}"
+    )
+    lm_satellite_attribution: str = "Görüntü © Esri, Maxar, Earthstar Geographics"
+    lm_satellite_max_zoom: int = 19
+
     @property
     def tescom_factory_sites(self) -> dict[str, tuple[str, str, float | None]]:
         """`fabrika_id` → (saha anahtarı, ad, kWp). Bozuk girdiler sessizce atlanır."""
