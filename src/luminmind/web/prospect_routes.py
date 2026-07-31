@@ -163,6 +163,19 @@ async def prospect_list(
     )
 
 
+@router.post("/{design_id}/delete")
+async def prospect_delete(
+    design_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_web_user)],
+) -> Response:
+    """Fizibilite silme."""
+    design = await _load_design(session, design_id, user)
+    await session.delete(design)
+    await session.commit()
+    return RedirectResponse(url="/ui/fizibilite", status_code=303)
+
+
 @router.get("/yeni", response_class=HTMLResponse)
 async def prospect_new(
     request: Request,

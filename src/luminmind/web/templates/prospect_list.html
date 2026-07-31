@@ -7,13 +7,19 @@
     <h1>Fizibilite</h1>
     <p class="sub">Kurulmamış santrallerin verim ve geri ödeme analizi</p>
   </div>
-  <a href="/ui/fizibilite/yeni" class="btn primary">Yeni fizibilite</a>
+  <div>
+    {% if designs %}
+    <button onclick="toggleEditMode()" class="btn" style="margin-right: 8px;">Düzenle</button>
+    {% endif %}
+    <a href="/ui/fizibilite/yeni" class="btn primary">Yeni fizibilite</a>
+  </div>
 </div>
 
 {% if designs %}
-<div class="card table-wrap">
+<div class="card table-wrap" id="prospectList">
 <table>
   <tr>
+    <th class="del-col" style="display:none; width:40px;"></th>
     <th>Proje</th><th>Müşteri</th>
     <th class="num">Güç</th><th class="num">Üretim</th>
     <th class="num">Geri ödeme</th><th class="num">NPV</th>
@@ -22,6 +28,11 @@
   {% for d in designs %}
   {% set r = d.latest_report %}
   <tr>
+    <td class="del-col" style="display:none;">
+      <form action="/ui/fizibilite/{{ d.id }}/delete" method="post" onsubmit="return confirm('Silmek istediğinize emin misiniz?');" style="margin:0;">
+        <button type="submit" class="btn btn-sm" style="background:var(--red); color:white; padding:2px 6px;">Sil</button>
+      </form>
+    </td>
     <td><a href="/ui/fizibilite/{{ d.id }}">{{ d.name }}</a></td>
     <td>{{ d.customer or "—" }}</td>
     <td class="num">{% if r %}{{ "%.1f"|format(r.dc_capacity_kwp) }} kWp{% else %}—{% endif %}</td>
@@ -40,6 +51,13 @@
   {% endfor %}
 </table>
 </div>
+<script>
+function toggleEditMode() {
+  const cols = document.querySelectorAll('.del-col');
+  const isEditing = cols[0].style.display !== 'none';
+  cols.forEach(c => c.style.display = isEditing ? 'none' : 'table-cell');
+}
+</script>
 {% else %}
 <div class="card empty">
   <div style="font-size:32px; opacity:.35; margin-bottom:10px">◱</div>
