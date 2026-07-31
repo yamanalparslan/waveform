@@ -34,7 +34,7 @@ def _factor(*losses: float) -> float:
 @dataclass(frozen=True)
 class LossChain:
     # --- DC tarafı (invertör kırpmasından önce) ---
-    soiling: float = 0.02  # statik kirlilik tabanı (dinamik model yoksa)
+    soiling: float = 0.04  # statik kirlilik tabanı (dinamik model yoksa, Türkiye endüstriyel çatılar için %4 gerçekçi)
     mismatch: float = 0.02  # modül/string uyumsuzluğu
     dc_wiring: float = 0.02  # DC kablo omik kaybı
     connections: float = 0.005  # konnektör/klemens
@@ -45,7 +45,7 @@ class LossChain:
     # --- AC tarafı (invertörden sayaca) ---
     ac_wiring: float = 0.01  # AC kablolama
     transformer: float = 0.015  # OG trafo (sayaç OG tarafında)
-    availability: float = 0.0  # planlı kesinti/bakım beklentisi
+    availability: float = 0.015  # planlı kesinti/bakım/şebeke gidişi beklentisi (%1.5)
     other: float = 0.0  # ayarlanabilir ek kayıp
 
     @property
