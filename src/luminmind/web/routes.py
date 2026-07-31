@@ -27,6 +27,7 @@ from sqlalchemy.orm import selectinload
 
 from luminmind.analytics.accuracy import AccuracyScore, align_series, score_day
 from luminmind.analytics.comparison import floor_to_grid, plant_actual_from_samples
+from luminmind.core.aggregate import aggregate_hourly, aggregate_daily
 from luminmind.analytics.insights import (
     PRIORITY_LABELS,
     PRIORITY_ORDER,
@@ -2071,18 +2072,32 @@ async def _load_daily_report(
     current = start
     while current < stop:
         day_end = current + timedelta(days=1)
-        raw = plant_actual_from_samples(
-            await influx.query_raw_window(current, day_end)
-        )
+        raw_samples = await influx.query_raw_window(current, day_end)
+        hourly = aggregate_hourly(raw_samples)
+        daily = aggregate_daily(hourly)
+        
         expected = await influx.query_twin_window(current, day_end)
         for p in plants:
-            actual = raw.get(p.vendor_plant_id, {})
-            exp = expected.get(p.vendor_plant_id, {})
-            if not actual and not exp:
+            # Tescom sub-plants handling:
+            # InfluxDB stores "tescom-izmir-uretim" and "tescom-izmir-mekanik",
+            # but Postgres has "tescom-izmir".
+            if p.vendor == "tescom":
+                d_aggs = [d for d in daily if d.plant_id.startswith(p.vendor_plant_id)]
+                exp_vals = []
+                for pid, exps in expected.items():
+                    if pid.startswith(p.vendor_plant_id):
+                        exp_vals.extend(exps.values())
+            else:
+                d_aggs = [d for d in daily if d.plant_id == p.vendor_plant_id]
+                exp_vals = list(expected.get(p.vendor_plant_id, {}).values())
+            
+            if not d_aggs and not exp_vals:
                 continue
-            energy = sum(actual.values()) * 0.25
-            expected_kwh = sum(exp.values()) * 0.25
-            peak = max(actual.values()) if actual else 0.0
+                
+            energy = sum(d.energy_kwh for d in d_aggs)
+            expected_kwh = sum(exp_vals) * 0.25
+            peak = max((d.peak_ac_power_kw for d in d_aggs), default=0.0)
+            
             pr = (
                 min(200.0, energy / expected_kwh * 100.0)
                 if expected_kwh > 1.0
@@ -2128,11 +2143,7 @@ async def reports_page(
 
     # Özet
     total_energy = sum(r["energy_kwh"] for r in rows)
-    total_money = sum(money_of(r["energy_kwh"], tariffs[r["plant_id"]]) for r in rows)
-    missed_money = sum(
-        money_of(max(0.0, r["expected_kwh"] - r["energy_kwh"]), tariffs[r["plant_id"]])
-        for r in rows
-    )
+    missed_energy = sum(max(0.0, r["expected_kwh"] - r["energy_kwh"]) for r in rows)
     prs = [r["pr"] for r in rows if r["pr"] > 0]
     avg_pr = sum(prs) / len(prs) if prs else 0.0
     best_day = max(rows, key=lambda r: r["energy_kwh"], default=None)
@@ -2146,19 +2157,18 @@ async def reports_page(
         or 0
     )
 
-    # Günlük kazanç eğrisi (tüm santrallerin toplamı)
-    daily_money: dict[date, float] = {}
+    # Günlük üretim eğrisi (tüm santrallerin toplamı)
+    daily_energy: dict[date, float] = {}
     for r in rows:
-        earned = money_of(r["energy_kwh"], tariffs[r["plant_id"]])
-        daily_money[r["date_obj"]] = daily_money.get(r["date_obj"], 0.0) + earned
-    money_points = [
+        daily_energy[r["date_obj"]] = daily_energy.get(r["date_obj"], 0.0) + r["energy_kwh"]
+    energy_points = [
         (datetime(d.year, d.month, d.day, tzinfo=TRT), v)
-        for d, v in sorted(daily_money.items())
+        for d, v in sorted(daily_energy.items())
     ]
     energy_chart = line_chart(
-        [Series("Günlük kazanç", CHART_REVENUE, money_points)],
+        [Series("Günlük üretim", CHART_ACTUAL, energy_points)],
         TRT,
-        unit="₺",
+        unit="kWh",
     )
 
     def _pr_color(pr: float) -> str:
@@ -2174,7 +2184,6 @@ async def reports_page(
         {
             "date": r["date_obj"].strftime("%d.%m.%Y"),
             "plant": r["plant_name"],
-            "money": fmt_try(money_of(r["energy_kwh"], tariffs[r["plant_id"]])),
             "energy": _fmt_int(r["energy_kwh"]),
             "expected": _fmt_int(r["expected_kwh"]) if r["expected_kwh"] else "—",
             "pr": f"%{r['pr']:.0f}" if r["pr"] else "—",
@@ -2195,25 +2204,20 @@ async def reports_page(
             "range_start": start_day.strftime("%d.%m.%Y"),
             "range_end": end_day.strftime("%d.%m.%Y"),
             "summary": {
-                "money": fmt_try(total_money),
                 "energy_kwh": _fmt_int(total_energy),
-                "missed_money": fmt_try(missed_money) if missed_money >= 1 else None,
+                "missed_energy": _fmt_int(missed_energy) if missed_energy >= 1 else None,
                 "avg_pr": _fmt_1(avg_pr) if avg_pr else "—",
                 "avg_pr_verdict": _pr_verdict(avg_pr),
                 "avg_pr_ok": avg_pr >= 85.0,
                 "best_day": (
                     best_day["date_obj"].strftime("%d.%m.%Y") if best_day else "—"
                 ),
-                "best_day_money": (
-                    fmt_try(money_of(best_day["energy_kwh"], tariffs[best_day["plant_id"]]))
-                    if best_day
-                    else "—"
-                ),
+                "best_day_energy": _fmt_int(best_day["energy_kwh"]) if best_day else "—",
                 "anomalies_new": anomalies_new,
             },
             "energy_chart": energy_chart,
             "daily_rows": daily_rows_view,
-            "page_title": "Geçmiş & Kazanç",
+            "page_title": "Geçmiş & Üretim",
         },
     )
 

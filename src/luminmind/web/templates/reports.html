@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Geçmiş &amp; Kazanç{% endblock %}
-{% block crumbs %}<b>Geçmiş &amp; Kazanç</b>{% endblock %}
+{% block title %}Geçmiş &amp; Üretim{% endblock %}
+{% block crumbs %}<b>Geçmiş &amp; Üretim</b>{% endblock %}
 {% block content %}
-<h1>Geçmiş &amp; Kazanç</h1>
-<p class="sub">Santrallerinizin son günlerde ne kadar ürettiği ve kazandırdığı</p>
+<h1>Geçmiş &amp; Üretim</h1>
+<p class="sub">Santrallerinizin son günlerde ne kadar ürettiği</p>
 
 <div class="toolbar">
   <form method="get" class="row-inline">
@@ -22,13 +22,13 @@
 
 <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
   <div class="kpi accent-green">
-    <div class="label">Dönem kazancınız</div>
-    <div class="value">{{ summary.money }}</div>
-    <div class="trend">{{ summary.energy_kwh }} kWh karşılığı</div>
+    <div class="label">Dönem üretiminiz</div>
+    <div class="value" style="font-size:20px">{{ summary.energy_kwh }}</div>
+    <div class="trend">kWh</div>
   </div>
   <div class="kpi accent-amber">
     <div class="label">En iyi gününüz</div>
-    <div class="value" style="font-size:20px">{{ summary.best_day_money }}</div>
+    <div class="value" style="font-size:20px">{{ summary.best_day_energy }}</div>
     <div class="trend">{{ summary.best_day }}</div>
   </div>
   <div class="kpi {{ 'accent-green' if summary.avg_pr_ok else 'accent-red' }}">
@@ -37,13 +37,13 @@
     <div class="trend {{ 'up' if summary.avg_pr_ok else 'down' }}">{{ summary.avg_pr_verdict }}</div>
   </div>
   <div class="kpi accent-red">
-    <div class="label">Kaçırdığınız kazanç</div>
-    <div class="value" style="font-size:20px">{{ summary.missed_money or '—' }}</div>
+    <div class="label">Kaçırdığınız üretim</div>
+    <div class="value" style="font-size:20px">{{ summary.missed_energy or '—' }}</div>
     <div class="trend">havanın elverdiğine göre</div>
   </div>
 </div>
 
-<h2>Günlük kazancınız</h2>
+<h2>Günlük üretim</h2>
 <div class="chart-wrap">{{ energy_chart | safe }}</div>
 
 <h2>Gün gün dökümü</h2>
@@ -52,7 +52,6 @@
   <tr>
     <th>Tarih</th>
     <th>Santral</th>
-    <th style="text-align:right">Kazanç</th>
     <th style="text-align:right">Üretim (kWh)</th>
     <th style="text-align:right">Olması gereken (kWh)</th>
     <th style="text-align:right">Oran</th>
@@ -61,7 +60,6 @@
   <tr>
     <td class="num">{{ row.date }}</td>
     <td>{{ row.plant }}</td>
-    <td class="num" style="text-align:right; color:var(--green)">{{ row.money }}</td>
     <td class="num" style="text-align:right">{{ row.energy }}</td>
     <td class="num" style="text-align:right">{{ row.expected }}</td>
     <td class="num" style="text-align:right; color:{{ row.pr_color }}">{{ row.pr }}</td>

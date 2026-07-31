@@ -31,6 +31,7 @@ geri ödeme hesaplanacak.</p>
   <div class="draw-bar">
     <button type="button" id="btn-draw" class="primary">Çatıyı çiz</button>
     <button type="button" id="btn-obstacle">Engel ekle (baca, pencere)</button>
+    <button type="button" id="btn-finish" class="primary" style="display:none">Çizimi Bitir</button>
     <button type="button" id="btn-undo">Son köşeyi geri al</button>
     <button type="button" id="btn-clear">Temizle</button>
     <span class="draw-hint" id="hint">Haritada arama yapıp çatıya yaklaşın, ardından
@@ -243,6 +244,7 @@ geri ödeme hesaplanacak.</p>
     }
     current = [];
     mode = null;
+    el('btn-finish').style.display = 'none';
     el('map').classList.remove('drawing');
     el('hint').textContent = roof.length >= 3
       ? 'Çatı hazır. İsterseniz engel ekleyin, sonra hesaplayın.'
@@ -265,14 +267,17 @@ geri ödeme hesaplanacak.</p>
     if (roofLayer) { map.removeLayer(roofLayer); roofLayer = null; }
     roof = [];
     el('map').classList.add('drawing');
-    el('hint').textContent = 'Köşelere tıklayın, bitirmek için çift tıklayın.';
+    el('btn-finish').style.display = 'inline-block';
+    el('hint').textContent = 'Köşelere tıklayın, bitirmek için "Çizimi Bitir"e veya çift tıklayın.';
     redraw();
   };
+  el('btn-finish').onclick = finishShape;
   el('btn-obstacle').onclick = function(){
     if (roof.length < 3) { el('hint').textContent = 'Önce çatıyı çizin.'; return; }
     mode = 'obstacle'; current = [];
     el('map').classList.add('drawing');
-    el('hint').textContent = 'Engelin köşelerine tıklayın, çift tıklayarak kapatın.';
+    el('btn-finish').style.display = 'inline-block';
+    el('hint').textContent = 'Engelin köşelerine tıklayın, bitirmek için "Çizimi Bitir"e tıklayın.';
     redraw();
   };
   el('btn-undo').onclick = function(){ current.pop(); redraw(); };
@@ -281,6 +286,7 @@ geri ödeme hesaplanacak.</p>
     if (roofLayer) { map.removeLayer(roofLayer); roofLayer = null; }
     obstacleLayers.forEach(l => map.removeLayer(l));
     obstacleLayers.length = 0;
+    el('btn-finish').style.display = 'none';
     el('map').classList.remove('drawing');
     redraw();
   };
@@ -288,9 +294,11 @@ geri ödeme hesaplanacak.</p>
   // Gönderim uzun sürüyor (PVGIS + 8760 saat); kullanıcıya durum gösterip
   // çift gönderimi engelliyoruz.
   el('form').addEventListener('submit', function(){
-    el('btn-submit').disabled = true;
-    el('busy').style.display = 'inline-flex';
-    el('submit-hint').textContent = '';
+    setTimeout(function() {
+      el('btn-submit').disabled = true;
+      el('busy').style.display = 'inline-flex';
+      el('submit-hint').textContent = '';
+    }, 10);
   });
 
   setTimeout(function(){ map.invalidateSize(); }, 120);

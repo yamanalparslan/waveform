@@ -80,7 +80,10 @@ services:
     # okunsun (giriş hız sınırı gerçek IP'yi görmeli).
     command: >
       uvicorn luminmind.api.main:app --host 0.0.0.0 --port 8000
-      --proxy-headers --forwarded-allow-ips=*
+      --reload --reload-include '*.html' --proxy-headers --forwarded-allow-ips=*
+    volumes:
+      - ./src:/app/src
+      - ./alembic:/app/alembic
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -119,6 +122,8 @@ services:
   worker:
     build: .
     command: celery -A luminmind.workers.celery_app worker --loglevel=INFO
+    volumes:
+      - ./src:/app/src
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -139,6 +144,8 @@ services:
   beat:
     build: .
     command: celery -A luminmind.workers.celery_app beat --loglevel=INFO
+    volumes:
+      - ./src:/app/src
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0

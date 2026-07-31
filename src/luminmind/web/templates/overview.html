@@ -16,9 +16,9 @@
 
 <div class="grid cards-4">
   <div class="kpi accent-green">
-    <div class="label">Bugünkü kazanç</div>
-    <div class="value">{{ totals.money }}</div>
-    <div class="trend">{{ totals.energy_kwh }} kWh üretim karşılığı</div>
+    <div class="label">Bugünkü üretim</div>
+    <div class="value">{{ totals.energy_kwh }}<small>kWh</small></div>
+    <div class="trend"></div>
   </div>
   <div class="kpi accent-blue">
     <div class="label">Anlık güç</div>
@@ -127,8 +127,8 @@
           <div style="padding:14px 20px 16px">
             <div class="mini-metrics">
               <div>
-                <div class="k">Bugün kazanç</div>
-                <div class="v" style="color:var(--green)">{{ item.today_money }}</div>
+                <div class="k">Bugün üretim</div>
+                <div class="v" style="color:var(--green)">{{ item.energy_kwh }} kWh</div>
               </div>
               <div>
                 <div class="k">Bugün üretim</div>

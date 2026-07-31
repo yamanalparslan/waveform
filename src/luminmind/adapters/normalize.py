@@ -122,11 +122,16 @@ def normalize_tescom_devices(
         factory = item.get("fabrika_id")
         factory_key = str(factory) if factory is not None else ""
         error_code = item.get("hata_kodu")
+        
+        dev_id = item.get("id")
+        if dev_id is None:
+            dev_id = item.get("slave_id")
+            
         points.append(
             TelemetryPoint(
                 vendor=Vendor.TESCOM,
                 vendor_plant_id=mapping.get(factory_key, default_plant_id),
-                vendor_device_id=str(item["slave_id"]),
+                vendor_device_id=str(dev_id),
                 ts=ts,
                 ac_power_kw=_as_float(item.get("guc")),
                 dc_voltage_v=_as_float(item.get("voltaj")),

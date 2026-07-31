@@ -11,7 +11,6 @@ Bunu görünür kılmak için ölçekli parametrelerde `derating` çarpanı taş
 
 import math
 from dataclasses import dataclass
-
 from luminmind.bess.models import CellParams
 
 

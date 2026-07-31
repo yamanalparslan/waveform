@@ -168,18 +168,18 @@ class TescomAdapter(VendorAdapter):
         return devices
 
     async def _get_device_history(
-        self, fabrika: str, slave_id: str, limit: int
+        self, fabrika: str, device_id: str, limit: int
     ) -> list[dict[str, Any]]:
         """Tek cihazın son `limit` ölçümü (üretici yaklaşık dakikada bir kaydediyor).
 
-        `fabrika` parametresi **zorunlu**: uç nokta yalnız `slave_id` aldığında
+        `fabrika` parametresi **zorunlu**: uç nokta yalnız `device_id` aldığında
         sunucu tarafında `mekanik`e düşüyor ve üretim fabrikasının 1 numaralı
         cihazı yerine mekaniğinki dönüyor.
         """
         response = await request_with_retry(
             self._client,
             "GET",
-            f"/api/v1/devices/{slave_id}/latest",
+            f"/api/v1/devices/{device_id}/latest",
             backoff_base_s=self._backoff_base_s,
             headers=self._headers,
             params={"limit": limit, "fabrika": fabrika},
@@ -191,7 +191,7 @@ class TescomAdapter(VendorAdapter):
         # Geçmiş kayıtlar cihazı tanımlamıyor (yalnız ölçüm alanları döner);
         # normalize edilebilmesi için kimlik alanları geri yazılır.
         return [
-            {**row, "fabrika_id": fabrika, "slave_id": slave_id}
+            {**row, "fabrika_id": fabrika, "id": device_id}
             for row in payload
             if isinstance(row, dict)
         ]
@@ -200,23 +200,23 @@ class TescomAdapter(VendorAdapter):
         self,
         vendor_plant_id: str,
         fabrika: str,
-        slave_ids: "Sequence[str]",
+        device_ids: "Sequence[str]",
         since: datetime,
         gap_minutes: float,
     ) -> list[TelemetryPoint]:
         """`since`'ten bu yana kaçırılmış ölçümleri geçmiş uç noktasından toplar."""
         limit = max(2, min(HISTORY_LIMIT_MAX, int(gap_minutes) + 5))
         collected: list[TelemetryPoint] = []
-        for slave_id in slave_ids:
+        for device_id in device_ids:
             try:
-                rows = await self._get_device_history(fabrika, slave_id, limit)
+                rows = await self._get_device_history(fabrika, device_id, limit)
             except Exception:
                 # Bir cihazın geçmişi alınamazsa diğerleri yine doldurulur;
                 # anlık nokta zaten elde, tamamen boş dönmenin anlamı yok.
                 logger.exception(
                     "Tescom history fetch failed plant=%s device=%s",
                     vendor_plant_id,
-                    slave_id,
+                    device_id,
                 )
                 continue
             collected.extend(
@@ -254,11 +254,11 @@ class TescomAdapter(VendorAdapter):
         if fabrika is None or gap_minutes <= BACKFILL_THRESHOLD_MIN:
             return live
 
-        slave_ids = sorted(
+        device_ids = sorted(
             {p.vendor_device_id for p in scoped if p.vendor_device_id is not None}
         )
         history = await self._backfill(
-            vendor_plant_id, fabrika, slave_ids, since, gap_minutes
+            vendor_plant_id, fabrika, device_ids, since, gap_minutes
         )
         # Anlık nokta kazanır: sayaç ve durum alanları yalnız onda dolu.
         merged: dict[tuple[str | None, datetime], TelemetryPoint] = {
