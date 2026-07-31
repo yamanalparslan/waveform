@@ -18,20 +18,10 @@
   const sites = {{ locations_json | safe }};
   const map = L.map('map', {scrollWheelZoom: false}).setView([39.0, 35.2], 6);
 
-  // İki tile sağlayıcı: açık (CARTO Positron) tercih; erişilemezse standart OSM'e düş
-  const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    {attribution: '© OpenStreetMap © CARTO', maxZoom: 19, subdomains: 'abcd'});
+  // Standart renkli OpenStreetMap katmanı
   const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     {attribution: '© OpenStreetMap', maxZoom: 19});
-  let tileErrors = 0;
-  light.on('tileerror', function(){
-    tileErrors++;
-    if (tileErrors === 3) {  // birkaç kare düşerse OSM'e geçelim
-      map.removeLayer(light);
-      osm.addTo(map);
-    }
-  });
-  light.addTo(map);
+  osm.addTo(map);
 
   // Renkler paletten gelir (web/theme.py); CSS değişkeni SVG özniteliğinde
   // güvenilir çalışmadığı için değer sunucuda gömülür.
