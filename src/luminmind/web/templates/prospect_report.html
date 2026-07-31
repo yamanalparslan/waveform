@@ -14,6 +14,7 @@
 .bars{display:flex; align-items:flex-end; gap:6px; height:150px; margin-top:6px}
 .bars .b{flex:1; display:flex; flex-direction:column; justify-content:flex-end;
   align-items:center; gap:5px; height:100%}
+.bars .val{font-size:11px; font-weight:600; color:var(--text); margin-bottom:-2px}
 .bars .fill{width:100%; background:var(--blue); border-radius:3px 3px 0 0; min-height:2px}
 .bars .lb{font-size:11px; color:var(--text-faint)}
 .wf td.n{text-align:right; font-variant-numeric:tabular-nums}
@@ -58,9 +59,9 @@
     <div class="u">yıl</div>
   </div>
   <div class="kpi {{ 'good' if report.npv_try > 0 else 'bad' }}">
-    <div class="k">Net bugünkü değer</div>
-    <div class="v">{{ "%.2f"|format(report.npv_try / 1000000) }}</div>
-    <div class="u">milyon ₺ · {{ "%.2f"|format(report.capex_try / 1000000) }}M ₺ yatırım</div>
+    <div class="k">Net bugünkü değer (NPV)</div>
+    <div class="v">{% if report.npv_try %}{{ "%.2f"|format(report.npv_try / 1000000) }}{% else %}—{% endif %}</div>
+    <div class="u">Milyon ₺</div>
   </div>
   <div class="kpi">
     <div class="k">Reel iç verim oranı</div>
@@ -84,11 +85,12 @@
     GCR {{ "%.2f"|format(report.gcr) }}</span>
 </div>
 
-<h2>Aylık üretim</h2>
+<h2>Aylık üretim (MWh)</h2>
 <div class="card">
-  <div class="bars">
+  <div class="bars" style="height:170px">
     {% for m in monthly %}
     <div class="b" title="{{ m.label }}: {{ "%.1f"|format(m.kwh / 1000) }} MWh">
+      <div class="val">{{ "%.0f"|format(m.kwh / 1000) }}</div>
       <div class="fill" style="height:{{ (m.share * 100) | round(1) }}%"></div>
       <div class="lb">{{ m.label }}</div>
     </div>
