@@ -89,6 +89,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       POSTGRES_DSN: postgresql+asyncpg://luminmind:${POSTGRES_PASSWORD:-changeme}@postgres:5432/luminmind
       INFLUX_URL: http://influxdb:8086
+      PYTHONPATH: /app/src
     ports:
       # Yalnızca localhost'a bağlanır. Dış dünyaya açılış cloudflared üzerinden
       # yapılır; bu satırı "8000:8000" yapmak paneli yerel ağın tamamına açar.
@@ -129,6 +130,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       POSTGRES_DSN: postgresql+asyncpg://luminmind:${POSTGRES_PASSWORD:-changeme}@postgres:5432/luminmind
       INFLUX_URL: http://influxdb:8086
+      PYTHONPATH: /app/src
     # host.docker.internal → host makinedeki Tescom API'sine (port 8503) erişim
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -149,6 +151,7 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /app/src
     restart: unless-stopped
     depends_on:
       redis:
