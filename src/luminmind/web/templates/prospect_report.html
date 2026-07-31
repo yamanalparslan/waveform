@@ -179,10 +179,10 @@
   const obstacles = {{ obstacles_json | safe }};
 
   const map = L.map('map', {maxZoom: 22});
-  L.tileLayer({{ satellite_url | tojson }}, {
-    maxNativeZoom: {{ satellite_max_zoom }},
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxNativeZoom: 19,
     maxZoom: 22,
-    attribution: {{ satellite_attribution | tojson }}
+    attribution: '© OpenStreetMap'
   }).addTo(map);
 
   const roofLayer = L.polygon(roof, {color: '#10b981', weight: 3, dashArray: '5, 5',
