@@ -197,6 +197,25 @@ def _elapsed_window(day: date, now: datetime | None = None) -> tuple[datetime, d
     return start, min(stop, floor_to_grid(now or datetime.now(tz=UTC)))
 
 
+def _counter_window(day: date, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Enerji sayacı sorgusunun penceresi — `_elapsed_window`'un aksine **kırpılmaz**.
+
+    `_elapsed_window` bitişi son 15 dakikalık ızgara sınırına indirir; bu, aralık
+    ortalaması olan güç için doğrudur (devam eden aralıkta ikizin noktası vardır
+    ama ölçüm tamamlanmamıştır). Kümülatif sayaç için yanlıştır: sayacın son
+    okuması "bugün şu ana kadar üretilen"dir ve her zaman geçerlidir.
+
+    Izgaraya kırpmak normalde bir aralık kadar üretim siler. Ama sayaç serisinde
+    çekim kesintisinden delik varsa deliğin *sonrasındaki* okuma da pencerenin
+    dışında kalır ve kayıp deliğin tamamı kadar olur. 03.08.2026'da gerçek üretim
+    406 kWh iken panel 183 kWh gösterdi: pencereye giren son okuma 09:09'daki
+    74 kWh'ti, kesinti sonrası 10:02'de gelen 151 kWh ise 10:00 sınırının
+    dışında kalmıştı.
+    """
+    start, stop = _trt_day_window(day)
+    return start, min(stop, now or datetime.now(tz=UTC))
+
+
 def _parse_day(value: str | None, default: date) -> date:
     if not value:
         return default
@@ -425,7 +444,8 @@ async def _daily_energy_series(
     actual, expected = await _day_curves(influx, keys, start, stop)
     # KPI kartıyla aynı kaynaktan okunur; grafiği integralden, kartı sayaçtan
     # beslemek aynı ekranda birbirini tutmayan iki üretim rakamı doğururdu.
-    counters = await _counters_by_key(influx, keys, start, stop)
+    # Sayaç penceresi burada da ızgaraya kırpılmaz (gerekçe `_counter_window`).
+    counters = await _counters_by_key(influx, keys, start, _counter_window(today)[1])
     kinds = {e.key: e.counter_kind for e in entries}
 
     produced: list[tuple[datetime, float]] = []
@@ -811,7 +831,8 @@ async def _load_plant_day(
     start, stop = _elapsed_window(day)
     entries = await _site_entries(plant)
     actual, expected = await _day_curves(influx, [e.key for e in entries], start, stop)
-    counters = await _counters_by_key(influx, [e.key for e in entries], start, stop)
+    # Sayaç penceresi ızgaraya kırpılmaz — gerekçe `_counter_window`'da.
+    counters = await _counters_by_key(influx, [e.key for e in entries], *_counter_window(day))
     per_site, unscoped = await _open_by_site(session, plant.id)
     device_counts = await _device_counts_by_site(session, plant.id, entries)
 
