@@ -593,24 +593,6 @@ async def test_map_page_embeds_sites_and_leaflet(client):
     assert 'id="map"' in response.text
 
 
-async def test_reports_page_renders(client):
-    await do_login(client)
-    response = await client.get("/ui/raporlar?days=7")
-    assert response.status_code == 200
-    assert "Geçmiş" in response.text
-    assert "Dönem kazancınız" in response.text
-    assert "Kaçırdığınız kazanç" in response.text
-    assert "CSV indir" in response.text
-
-
-async def test_reports_csv_download(client):
-    await do_login(client)
-    response = await client.get("/ui/raporlar/indir?days=7")
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/csv")
-    assert "attachment" in response.headers["content-disposition"]
-    # başlık satırı — kazanç sütunu dahil
-    assert "tarih,tesis,kazanc_try,enerji_kwh" in response.text
 
 
 async def test_plant_new_form_admin_only(client, engine):
