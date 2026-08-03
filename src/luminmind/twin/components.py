@@ -34,7 +34,9 @@ def _factor(*losses: float) -> float:
 @dataclass(frozen=True)
 class LossChain:
     # --- DC tarafı (invertör kırpmasından önce) ---
-    soiling: float = 0.04  # statik kirlilik tabanı (dinamik model yoksa, Türkiye endüstriyel çatılar için %4 gerçekçi)
+    # Statik kirlilik tabanı (dinamik model yoksa). Türkiye'de endüstriyel
+    # çatılarda %4 gerçekçi; PVWatts varsayılanı %2 buralar için iyimser.
+    soiling: float = 0.04
     mismatch: float = 0.02  # modül/string uyumsuzluğu
     dc_wiring: float = 0.02  # DC kablo omik kaybı
     connections: float = 0.005  # konnektör/klemens

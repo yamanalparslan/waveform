@@ -72,10 +72,19 @@
 {% else %}
 {# ------------------------------ DURUM ------------------------------ #}
 <div class="grid cards-4">
-  <div class="kpi accent-green">
-    <div class="label">Üretim</div>
-    <div class="value">{{ kpis.energy_kwh }}</div>
-    <div class="trend">Günlük üretim</div>
+  {#
+    Bu kart eskiden ikinci bir "Üretim" kartıydı ve yanındakiyle *birebir aynı*
+    değişkeni basıyordu (`kpis.energy_kwh`) — aynı sayı iki kez, bilgi sıfır.
+    Yerine veri tazeliği geldi: yandaki üç göstergenin geçerli olup olmadığını
+    söyleyen tek şey bu. Çekim durduğunda üretim düşük görünür ama bayat
+    görünmez; kullanıcı "bugün az üretmişiz" diye okur, "veri gelmiyor" diye
+    okumaz. 31.07.2026'da depolar ölüp çekim saatlerce durduğunda panel günlük
+    üretimi 32 kWh gösterdi, gerçek 2.679 kWh idi.
+  #}
+  <div class="kpi {{ 'accent-red' if freshness.stale else 'accent-green' }}">
+    <div class="label">Gelen son veri</div>
+    <div class="value">{{ freshness.value }}</div>
+    <div class="trend {{ 'down' if freshness.stale else 'up' }}">{{ freshness.trend }}</div>
   </div>
   <div class="kpi accent-blue">
     <div class="label">Üretim</div>
@@ -91,16 +100,6 @@
     <div class="label">Performans oranı</div>
     <div class="value">{{ kpis.pr }}{% if kpis.pr != '—' %}<small>%</small>{% endif %}</div>
     <div class="trend">{{ kpis.pr_verdict }}</div>
-  </div>
-  {#
-    Tazelik kartı yukarıdaki dört sayının *geçerli olup olmadığını* söyler.
-    Çekim durduğunda üretim düşük görünür ama bayat görünmez; kullanıcı "bugün az
-    üretmişiz" diye okur. Bu kart o iki durumu ayırır, o yüzden aynı satırda.
-  #}
-  <div class="kpi {{ 'accent-red' if freshness.stale else 'accent-green' }}">
-    <div class="label">Gelen son veri</div>
-    <div class="value">{{ freshness.value }}</div>
-    <div class="trend {{ 'down' if freshness.stale else 'up' }}">{{ freshness.trend }}</div>
   </div>
 </div>
 

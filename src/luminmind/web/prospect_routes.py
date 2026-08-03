@@ -28,8 +28,8 @@ from luminmind.api.deps import get_session
 from luminmind.config import Settings, get_settings
 from luminmind.core.models.auth import User
 from luminmind.core.models.prospect import ProspectDesign, ProspectReport, ProspectStatus
+from luminmind.prospect.catalog import INVERTER_CATALOG, MODULE_CATALOG
 from luminmind.prospect.finance import CostModel, FinanceParams, RevenueModel
-from luminmind.prospect.catalog import MODULE_CATALOG, INVERTER_CATALOG
 from luminmind.prospect.layout import InverterSpec, ModuleSpec
 from luminmind.prospect.service import analyse, to_report
 from luminmind.web.routes import (
@@ -235,12 +235,14 @@ async def prospect_create(
     sayfa "hesaplanıyor" göstergesiyle gönderiliyor (bkz. prospect_new.html).
     """
     from dataclasses import asdict
-    
+
     points = _parse_polygon(polygon)
     latitude, longitude = _centroid(points)
-    
-    module_spec_dict = asdict(MODULE_CATALOG.get(module_id, MODULE_CATALOG["generic_580_topcon"])["spec"])
-    inverter_spec_dict = asdict(INVERTER_CATALOG.get(inverter_id, INVERTER_CATALOG["generic_100kw"])["spec"])
+
+    module_entry = MODULE_CATALOG.get(module_id, MODULE_CATALOG["generic_580_topcon"])
+    inverter_entry = INVERTER_CATALOG.get(inverter_id, INVERTER_CATALOG["generic_100kw"])
+    module_spec_dict = asdict(module_entry["spec"])
+    inverter_spec_dict = asdict(inverter_entry["spec"])
 
     design = ProspectDesign(
         owner_id=user.id,

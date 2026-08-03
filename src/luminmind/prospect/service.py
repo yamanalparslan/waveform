@@ -150,8 +150,13 @@ def _collect_warnings(
 def build_mounting(design: ProspectDesign, frame: LocalFrame) -> MountingSpec:
     """Tasarım kaydından montaj kısıtlarını kurar (engeller yerel çerçevede)."""
     from luminmind.prospect.layout import Obstacle
-    obstacles = []
-    for obs_data in (design.obstacles or []):
+
+    # Liste toplanıp sonra `tuple`a çevrilirken aynı ada yazmak tip çakışması
+    # üretiyordu (`list[Obstacle]` değişkenine `tuple[Obstacle, ...]` atanıyor).
+    # `MountingSpec.obstacles` donmuş bir demet bekliyor; ayrı ada yazınca hem
+    # mypy susuyor hem de dönüşümün nerede olduğu okunur kalıyor.
+    collected: list[Obstacle] = []
+    for obs_data in design.obstacles or []:
         if isinstance(obs_data, dict) and "polygon" in obs_data:
             points = obs_data["polygon"]
             height = obs_data.get("height", 0.0)
@@ -159,14 +164,13 @@ def build_mounting(design: ProspectDesign, frame: LocalFrame) -> MountingSpec:
             points = obs_data
             height = 0.0
         local_ring = frame.ring_to_local([LatLon(lat=p[0], lon=p[1]) for p in points])
-        obstacles.append(Obstacle(polygon=local_ring, height_m=height))
-    obstacles = tuple(obstacles)
+        collected.append(Obstacle(polygon=local_ring, height_m=height))
     return MountingSpec(
         mount=MountType(design.mount_type),
         tilt_deg=design.tilt_deg,
         azimuth_deg=design.azimuth_deg,
         setback_m=design.setback_m,
-        obstacles=obstacles,
+        obstacles=tuple(collected),
         obstacle_clearance_m=design.obstacle_clearance_m,
         row_pitch_m=design.row_pitch_m,
     )

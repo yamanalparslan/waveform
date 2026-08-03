@@ -523,7 +523,9 @@ def run_chain(
     if external_shading is not None:
         ext_shading = external_shading.reindex(index).fillna(0.0).clip(0.0, 1.0)
         effective = effective * (1.0 - ext_shading)
-        shaded_out = np.maximum(poa["shaded_fraction"].where(usable, 0.0), ext_shading.where(usable, 0.0))
+        shaded_out = np.maximum(
+            poa["shaded_fraction"].where(usable, 0.0), ext_shading.where(usable, 0.0)
+        )
     else:
         shaded_out = poa["shaded_fraction"].where(usable, 0.0)
 
