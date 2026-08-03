@@ -8,12 +8,13 @@ Birim dönüşümleri:
 - SMA ennexOS: güçler W, enerji Wh → kW/kWh'e çevrilir.
 """
 
+import logging
 from datetime import UTC, datetime, tzinfo
 from typing import Any
 
 from luminmind.core.schemas import TelemetryPoint, Vendor
 
-_TESCOM_TS_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S")
+logger = logging.getLogger(__name__)
 
 
 def _as_float(value: Any) -> float | None:
@@ -69,13 +70,25 @@ def normalize_huawei_dev_kpi(
 
 
 def _parse_tescom_ts(value: str, tz: tzinfo) -> datetime | None:
-    """Tescom yerel zaman damgasını (tz'siz) verilen zaman dilimiyle işaretler."""
-    for fmt in _TESCOM_TS_FORMATS:
-        try:
-            return datetime.strptime(value, fmt).replace(tzinfo=tz)
-        except ValueError:
-            continue
-    return None
+    """Tescom yerel zaman damgasını (tz'siz) verilen zaman dilimiyle işaretler.
+
+    **Ayırıcı uç noktaya göre değişiyor.** `/devices` damgayı `datetime` olarak
+    döndürüyor ve FastAPI onu ISO 8601 ile serileştiriyor (`2026-08-03T14:13:55`),
+    `/devices/{id}/latest` ise `str(datetime)` uyguladığı için boşluk kullanıyor
+    (`2026-08-03 14:13:55`). Eskiden yalnız boşluklu biçim `strptime` ile
+    denenirdi; üretici `/devices` çıktısını ISO'ya çevirdiği gün her nokta
+    sessizce düştü ve çekim "0 points" diyerek başarılı göründü.
+    `fromisoformat` iki ayırıcıyı da kabul eder.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        # Sessiz düşüş bir daha teşhis edilemez olmasın: biçim değişikliği
+        # üretimde tüm çekimi durdurabiliyor.
+        logger.warning("Tescom timestamp not ISO 8601, point dropped: %r", value)
+        return None
+    # Üretici tz'siz yerel saat gönderiyor; bir gün offset eklerse ezmeyelim.
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=tz)
 
 
 def normalize_tescom_devices(

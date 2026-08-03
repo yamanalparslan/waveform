@@ -108,6 +108,34 @@ def test_normalize_handles_timestamp_without_microseconds():
     assert points[0].ac_power_kw == 50.0
 
 
+def test_normalize_accepts_iso_t_separator():
+    """`/devices` ISO 'T' ayırıcısı döndürüyor, `/latest` boşluk — ikisi de geçmeli.
+
+    Üretici `/devices` yanıtında damgayı `str(datetime)` yerine `datetime` olarak
+    bırakınca FastAPI onu ISO 8601 ile serileştirdi ve ayırıcı boşluktan `T`'ye
+    döndü. Parser yalnız boşluklu biçimi denediği için her nokta sessizce
+    düştü: çekim "0 points" diyerek başarılı görünürken saha verisi saatlerce
+    hiç yazılmadı. İki ayırıcı da desteklenmeli.
+    """
+    spaced = [{"slave_id": 3, "zaman": "2026-07-21 11:00:00.500000", "guc": 50.0}]
+    iso_t = [{"slave_id": 3, "zaman": "2026-07-21T11:00:00.500000", "guc": 50.0}]
+
+    expected = datetime(2026, 7, 21, 8, 0, 0, 500000, tzinfo=UTC)
+    assert normalize_tescom_devices("p", spaced, TRT)[0].ts == expected
+    assert normalize_tescom_devices("p", iso_t, TRT)[0].ts == expected
+
+
+def test_normalize_keeps_explicit_offset_instead_of_assuming_local():
+    """Damga offset taşıyorsa yerel dilimle ezilmemeli.
+
+    `replace(tzinfo=tz)` aware bir damgayı sessizce kaydırır: üretici bir gün
+    UTC offset eklerse tüm seri 3 saat kayar.
+    """
+    payload = [{"slave_id": 3, "zaman": "2026-07-21T11:00:00+00:00", "guc": 50.0}]
+    points = normalize_tescom_devices("p", payload, TRT)
+    assert points[0].ts == datetime(2026, 7, 21, 11, 0, tzinfo=UTC)
+
+
 def test_normalize_skips_bad_timestamp():
     payload = [{"slave_id": 4, "zaman": "not-a-date", "guc": 1.0}]
     assert normalize_tescom_devices("p", payload, TRT) == []
