@@ -1239,6 +1239,57 @@ async def _scope_inverters(scope: PageScope) -> list[Any]:
     ]
 
 
+def _data_freshness(inverters: "Sequence[Any]") -> dict[str, Any]:
+    """Kapsamdaki en yeni telemetri damgası ve kaç cihazın hâlâ veri gönderdiği.
+
+    Bu göstergenin sayfada bulunması bir konfor değil, **doğruluk koşulu**.
+    31.07.2026'da veri depoları ölüp çekim saatlerce durduğunda panel günlük
+    üretimi 32 kWh gösterdi; gerçek 2.679 kWh idi. Ekrandaki hiçbir şey o sayının
+    saatler öncesine ait olduğunu söylemiyordu — üretim düşük görünüyordu, bayat
+    görünmüyordu. Kullanıcı "bugün az üretmişiz" diye okur, "veri gelmiyor" diye
+    okumaz. Tazelik damgası bu iki durumu ayırt eder.
+
+    `stale` eşiği invertör sağlık modeliyle aynı (`STALE_AFTER`); iki farklı eşik
+    tutmak aynı cihazın kartta taze, tabloda çevrimdışı görünmesine yol açardı.
+    """
+    from luminmind.analytics.inverter_health import STALE_AFTER
+
+    stamps = [
+        inv.last_seen_at.replace(tzinfo=UTC)
+        if inv.last_seen_at.tzinfo is None
+        else inv.last_seen_at
+        for inv in inverters
+        if inv.last_seen_at is not None
+    ]
+    total = len(inverters)
+    if not stamps:
+        return {
+            "value": "—",
+            "trend": f"{total} cihazdan hiç veri gelmedi" if total else "cihaz kaydı yok",
+            "ok": False,
+            "stale": True,
+            "online": 0,
+            "total": total,
+        }
+
+    now = datetime.now(tz=UTC)
+    newest = max(stamps)
+    online = sum(1 for ts in stamps if now - ts <= STALE_AFTER)
+    stale = (now - newest) > STALE_AFTER
+    return {
+        "value": newest.astimezone(TRT).strftime("%H:%M"),
+        "trend": (
+            f"{_time_ago_tr(newest)} · {online}/{total} cihaz veri gönderiyor"
+            if not stale
+            else f"{_time_ago_tr(newest)} — veri akışı durmuş olabilir"
+        ),
+        "ok": not stale,
+        "stale": stale,
+        "online": online,
+        "total": total,
+    }
+
+
 def _production_chart(day: PlantDay, entries: "Sequence[SiteEntry]") -> str:
     """Kapsamdaki üretim eğrisi: toplam gerçek + beklenen, çok sahalıysa saha kırılımı."""
     keys = [e.key for e in entries]
@@ -1372,6 +1423,7 @@ async def _render_plant_overview(
                 {e.site.id: e.name for e in day.entries if e.site},
                 {e.site.id: e.code for e in day.entries if e.site},
             ),
+            "freshness": _data_freshness(inverters),
             "batteries": await scope.plant.awaitable_attrs.batteries,
             "unscoped_open": day.unscoped_open,
             "auto_refresh_s": 60,
