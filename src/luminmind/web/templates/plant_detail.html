@@ -92,7 +92,25 @@
     <div class="value">{{ kpis.pr }}{% if kpis.pr != '—' %}<small>%</small>{% endif %}</div>
     <div class="trend">{{ kpis.pr_verdict }}</div>
   </div>
+  {#
+    Tazelik kartı yukarıdaki dört sayının *geçerli olup olmadığını* söyler.
+    Çekim durduğunda üretim düşük görünür ama bayat görünmez; kullanıcı "bugün az
+    üretmişiz" diye okur. Bu kart o iki durumu ayırır, o yüzden aynı satırda.
+  #}
+  <div class="kpi {{ 'accent-red' if freshness.stale else 'accent-green' }}">
+    <div class="label">Gelen son veri</div>
+    <div class="value">{{ freshness.value }}</div>
+    <div class="trend {{ 'down' if freshness.stale else 'up' }}">{{ freshness.trend }}</div>
+  </div>
 </div>
+
+{% if freshness.stale and freshness.total %}
+<div class="error" style="margin-top:14px">
+  Son telemetri {{ freshness.value }}'de geldi — bu sayfadaki üretim ve performans
+  değerleri o andan sonrasını içermiyor. Düşük üretim, gerçekten az üretimden
+  değil veri akışının durmasından kaynaklanıyor olabilir.
+</div>
+{% endif %}
 
 <div class="split-2" style="margin-top:20px">
   <div class="stack">
@@ -190,6 +208,42 @@
   </table>
 </div>
 {% endif %}
+
+{#
+  İnvertörlerden gelen son veri. Aynı tablo "İnvertörler" sekmesinde de var ama
+  oraya bakmak için sekme değiştirmek gerekiyor; veri akışının durup durmadığı
+  ise durum sayfasının ilk sorusu. Burada özet hâli duruyor (cihaz, güç, sıcaklık,
+  son damga), tam liste ve açılış bağlantıları sekmede.
+#}
+<h2>İnvertörlerden gelen son veri</h2>
+<div class="card table-wrap">
+  <table>
+    <tr>
+      <th>Cihaz</th>{% if not site %}<th>Fabrika</th>{% endif %}
+      <th>Durum</th><th class="num">Güç</th><th class="num">Sıcaklık</th>
+      <th>Hata / durum</th><th class="num">Son veri</th>
+    </tr>
+    {% for row in inverter_rows %}
+    <tr>
+      <td><a href="{{ plant_url }}{% if row.site_code %}/sites/{{ row.site_code }}{% endif %}/inverters/{{ row.vendor_device_id }}"><b>{{ row.vendor_device_id }}</b></a></td>
+      {% if not site %}<td style="color:var(--text-dim)">{{ row.site_name or '—' }}</td>{% endif %}
+      <td><span class="chip {{ row.health_chip }}">{{ row.health_label }}</span></td>
+      <td class="num">{{ row.power }}</td>
+      <td class="num" style="color:{{ row.temp_color }}">{{ row.temp }}</td>
+      <td style="color:var(--text-dim)">{{ row.error_or_status }}</td>
+      <td class="num">{{ row.last_seen }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">Henüz cihaz kaydı yok — ilk telemetri geldiğinde
+      cihazlar kendiliğinden listelenecek.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+<p class="note">
+  Tazelik eşiği 30 dakika: bu süreden eski damga taşıyan cihaz “Çevrimdışı”
+  sayılır. <a href="{{ base_url }}?tab=inverterler{% if site %}&amp;site={{ site_code }}{% endif %}">
+    İnvertör sekmesinde tümünü aç →</a>
+</p>
 
 <h2>Cihaz × saat performansı</h2>
 <div class="chart-wrap">{{ heatmap_svg | safe }}</div>
