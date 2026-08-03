@@ -5,8 +5,6 @@ Oturum: login formu JWT üretir ve HttpOnly çerezde taşır; sayfa bağımlıl�
 olarak üretilir (charts.py). Saatler TRT gösterilir.
 """
 
-import csv
-import io
 import json
 import uuid
 from collections.abc import Mapping, Sequence
@@ -18,7 +16,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from sqlalchemy import func, select
@@ -26,8 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from luminmind.analytics.accuracy import AccuracyScore, align_series, score_day
-from luminmind.analytics.comparison import floor_to_grid, plant_actual_from_samples
-from luminmind.core.aggregate import aggregate_hourly, aggregate_daily
+from luminmind.analytics.comparison import floor_to_grid
 from luminmind.analytics.insights import (
     PRIORITY_LABELS,
     PRIORITY_ORDER,
@@ -97,7 +94,6 @@ from luminmind.web.charts import (
 from luminmind.web.theme import (
     CHART_ACTUAL,
     CHART_EXPECTED,
-    CHART_REVENUE,
     CHART_TEMPERATURE,
     PALETTE,
     css_root_block,
@@ -199,6 +195,25 @@ def _elapsed_window(day: date, now: datetime | None = None) -> tuple[datetime, d
     """
     start, stop = _trt_day_window(day)
     return start, min(stop, floor_to_grid(now or datetime.now(tz=UTC)))
+
+
+def _counter_window(day: date, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Enerji sayacı sorgusunun penceresi — `_elapsed_window`'un aksine **kırpılmaz**.
+
+    `_elapsed_window` bitişi son 15 dakikalık ızgara sınırına indirir; bu, aralık
+    ortalaması olan güç için doğrudur (devam eden aralıkta ikizin noktası vardır
+    ama ölçüm tamamlanmamıştır). Kümülatif sayaç için yanlıştır: sayacın son
+    okuması "bugün şu ana kadar üretilen"dir ve her zaman geçerlidir.
+
+    Izgaraya kırpmak normalde bir aralık kadar üretim siler. Ama sayaç serisinde
+    çekim kesintisinden delik varsa deliğin *sonrasındaki* okuma da pencerenin
+    dışında kalır ve kayıp deliğin tamamı kadar olur. 03.08.2026'da gerçek üretim
+    406 kWh iken panel 183 kWh gösterdi: pencereye giren son okuma 09:09'daki
+    74 kWh'ti, kesinti sonrası 10:02'de gelen 151 kWh ise 10:00 sınırının
+    dışında kalmıştı.
+    """
+    start, stop = _trt_day_window(day)
+    return start, min(stop, now or datetime.now(tz=UTC))
 
 
 def _parse_day(value: str | None, default: date) -> date:
@@ -429,7 +444,8 @@ async def _daily_energy_series(
     actual, expected = await _day_curves(influx, keys, start, stop)
     # KPI kartıyla aynı kaynaktan okunur; grafiği integralden, kartı sayaçtan
     # beslemek aynı ekranda birbirini tutmayan iki üretim rakamı doğururdu.
-    counters = await _counters_by_key(influx, keys, start, stop)
+    # Sayaç penceresi burada da ızgaraya kırpılmaz (gerekçe `_counter_window`).
+    counters = await _counters_by_key(influx, keys, start, _counter_window(today)[1])
     kinds = {e.key: e.counter_kind for e in entries}
 
     produced: list[tuple[datetime, float]] = []
@@ -815,7 +831,8 @@ async def _load_plant_day(
     start, stop = _elapsed_window(day)
     entries = await _site_entries(plant)
     actual, expected = await _day_curves(influx, [e.key for e in entries], start, stop)
-    counters = await _counters_by_key(influx, [e.key for e in entries], start, stop)
+    # Sayaç penceresi ızgaraya kırpılmaz — gerekçe `_counter_window`'da.
+    counters = await _counters_by_key(influx, [e.key for e in entries], *_counter_window(day))
     per_site, unscoped = await _open_by_site(session, plant.id)
     device_counts = await _device_counts_by_site(session, plant.id, entries)
 
@@ -2105,217 +2122,6 @@ async def arbitrage_page(
             "action_labels": ACTION_LABELS,
             "page_title": f"{plant.name} · Arbitraj",
         },
-    )
-
-
-# ------------------------------ Reports ------------------------------
-
-
-async def _load_daily_report(
-    influx: Any,
-    plants: "Sequence[Plant]",
-    start: datetime,
-    stop: datetime,
-) -> list[dict[str, Any]]:
-    """`lm_daily` bucket'ından günlük agregatları okur; boşsa lm_raw'dan türetir."""
-    rows: list[dict[str, Any]] = []
-    if influx is None:
-        return rows
-    current = start
-    while current < stop:
-        day_end = current + timedelta(days=1)
-        raw_samples = await influx.query_raw_window(current, day_end)
-        hourly = aggregate_hourly(raw_samples)
-        daily = aggregate_daily(hourly)
-        
-        expected = await influx.query_twin_window(current, day_end)
-        for p in plants:
-            # Tescom sub-plants handling:
-            # InfluxDB stores "tescom-izmir-uretim" and "tescom-izmir-mekanik",
-            # but Postgres has "tescom-izmir".
-            if p.vendor == "tescom":
-                d_aggs = [d for d in daily if d.plant_id.startswith(p.vendor_plant_id)]
-                exp_vals = []
-                for pid, exps in expected.items():
-                    if pid.startswith(p.vendor_plant_id):
-                        exp_vals.extend(exps.values())
-            else:
-                d_aggs = [d for d in daily if d.plant_id == p.vendor_plant_id]
-                exp_vals = list(expected.get(p.vendor_plant_id, {}).values())
-            
-            if not d_aggs and not exp_vals:
-                continue
-                
-            energy = sum(d.energy_kwh for d in d_aggs)
-            expected_kwh = sum(exp_vals) * 0.25
-            peak = max((d.peak_ac_power_kw for d in d_aggs), default=0.0)
-            
-            pr = (
-                min(200.0, energy / expected_kwh * 100.0)
-                if expected_kwh > 1.0
-                else 0.0
-            )
-            rows.append(
-                {
-                    "date_obj": current.date(),
-                    "plant_id": p.id,
-                    "plant_name": p.name,
-                    "energy_kwh": energy,
-                    "expected_kwh": expected_kwh,
-                    "peak_kw": peak,
-                    "pr": pr,
-                }
-            )
-        current = day_end
-    return rows
-
-
-@router.get("/raporlar", response_class=HTMLResponse)
-async def reports_page(
-    request: Request,
-    session: Annotated[AsyncSession, Depends(get_session)],
-    user: Annotated[User, Depends(get_web_user)],
-) -> HTMLResponse:
-    influx = request.app.state.influx
-    settings: Settings = request.app.state.settings
-    days_param = request.query_params.get("days", "7")
-    days = int(days_param) if days_param.isdigit() and int(days_param) in {7, 14, 30, 60} else 7
-
-    now = datetime.now(tz=UTC)
-    end_day = now.astimezone(TRT).date()
-    start_day = end_day - timedelta(days=days - 1)
-    start_utc = datetime(start_day.year, start_day.month, start_day.day, tzinfo=TRT).astimezone(UTC)
-    stop_utc = (
-        datetime(end_day.year, end_day.month, end_day.day, tzinfo=TRT) + timedelta(days=1)
-    ).astimezone(UTC)
-
-    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
-    tariffs = {p.id: tariff_for(p, settings) for p in plants}
-    rows = await _load_daily_report(influx, plants, start_utc, stop_utc)
-
-    # Özet
-    total_energy = sum(r["energy_kwh"] for r in rows)
-    missed_energy = sum(max(0.0, r["expected_kwh"] - r["energy_kwh"]) for r in rows)
-    prs = [r["pr"] for r in rows if r["pr"] > 0]
-    avg_pr = sum(prs) / len(prs) if prs else 0.0
-    best_day = max(rows, key=lambda r: r["energy_kwh"], default=None)
-
-    anomalies_new = int(
-        (
-            await session.execute(
-                select(func.count()).where(AnomalyEvent.started_at >= start_utc)
-            )
-        ).scalar()
-        or 0
-    )
-
-    # Günlük üretim eğrisi (tüm santrallerin toplamı)
-    daily_energy: dict[date, float] = {}
-    for r in rows:
-        daily_energy[r["date_obj"]] = daily_energy.get(r["date_obj"], 0.0) + r["energy_kwh"]
-    energy_points = [
-        (datetime(d.year, d.month, d.day, tzinfo=TRT), v)
-        for d, v in sorted(daily_energy.items())
-    ]
-    energy_chart = line_chart(
-        [Series("Günlük üretim", CHART_ACTUAL, energy_points)],
-        TRT,
-        unit="kWh",
-    )
-
-    def _pr_color(pr: float) -> str:
-        if pr <= 0:
-            return "var(--text-faint)"
-        if pr >= 90:
-            return "var(--teal)"
-        if pr >= 75:
-            return "var(--amber)"
-        return "var(--coral)"
-
-    daily_rows_view = [
-        {
-            "date": r["date_obj"].strftime("%d.%m.%Y"),
-            "plant": r["plant_name"],
-            "energy": _fmt_int(r["energy_kwh"]),
-            "expected": _fmt_int(r["expected_kwh"]) if r["expected_kwh"] else "—",
-            "pr": f"%{r['pr']:.0f}" if r["pr"] else "—",
-            "pr_color": _pr_color(r["pr"]),
-        }
-        for r in sorted(rows, key=lambda x: (x["date_obj"], x["plant_name"]), reverse=True)
-    ]
-
-    return templates.TemplateResponse(
-        request,
-        "reports.html",
-        {
-            "user": user,
-            "section": "reports",
-            "plant": None,
-            "sidebar_plants": (await sidebar_plants_context(session))[0],
-            "days": days,
-            "range_start": start_day.strftime("%d.%m.%Y"),
-            "range_end": end_day.strftime("%d.%m.%Y"),
-            "summary": {
-                "energy_kwh": _fmt_int(total_energy),
-                "missed_energy": _fmt_int(missed_energy) if missed_energy >= 1 else None,
-                "avg_pr": _fmt_1(avg_pr) if avg_pr else "—",
-                "avg_pr_verdict": _pr_verdict(avg_pr),
-                "avg_pr_ok": avg_pr >= 85.0,
-                "best_day": (
-                    best_day["date_obj"].strftime("%d.%m.%Y") if best_day else "—"
-                ),
-                "best_day_energy": _fmt_int(best_day["energy_kwh"]) if best_day else "—",
-                "anomalies_new": anomalies_new,
-            },
-            "energy_chart": energy_chart,
-            "daily_rows": daily_rows_view,
-            "page_title": "Geçmiş & Üretim",
-        },
-    )
-
-
-@router.get("/raporlar/indir")
-async def report_download(
-    request: Request,
-    session: Annotated[AsyncSession, Depends(get_session)],
-    user: Annotated[User, Depends(get_web_user)],
-) -> StreamingResponse:
-    influx = request.app.state.influx
-    settings: Settings = request.app.state.settings
-    days_param = request.query_params.get("days", "7")
-    days = int(days_param) if days_param.isdigit() and int(days_param) in {7, 14, 30, 60} else 7
-    now = datetime.now(tz=UTC)
-    end_day = now.astimezone(TRT).date()
-    start_day = end_day - timedelta(days=days - 1)
-    start_utc = datetime(start_day.year, start_day.month, start_day.day, tzinfo=TRT).astimezone(UTC)
-    stop_utc = (
-        datetime(end_day.year, end_day.month, end_day.day, tzinfo=TRT) + timedelta(days=1)
-    ).astimezone(UTC)
-
-    plants = (await session.scalars(select(Plant).order_by(Plant.name))).all()
-    tariffs = {p.id: tariff_for(p, settings) for p in plants}
-    rows = await _load_daily_report(influx, plants, start_utc, stop_utc)
-
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(["tarih", "tesis", "kazanc_try", "enerji_kwh", "beklenen_kwh",
-                     "performans_orani", "tepe_guc_kw"])
-    for r in sorted(rows, key=lambda x: (x["date_obj"], x["plant_name"])):
-        writer.writerow([
-            r["date_obj"].isoformat(),
-            r["plant_name"],
-            f"{money_of(r['energy_kwh'], tariffs[r['plant_id']]):.2f}",
-            f"{r['energy_kwh']:.2f}",
-            f"{r['expected_kwh']:.2f}",
-            f"{r['pr']:.2f}",
-            f"{r['peak_kw']:.2f}",
-        ])
-    buffer.seek(0)
-    filename = f"luminmind-rapor-{start_day.isoformat()}-{end_day.isoformat()}.csv"
-    return StreamingResponse(
-        iter([buffer.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

@@ -1,12 +1,13 @@
-from typing import Dict, Any
-from luminmind.prospect.layout import ModuleSpec, InverterSpec
+from typing import Any
+
+from luminmind.prospect.layout import InverterSpec, ModuleSpec
 
 # Panel Kataloğu: ID -> (ModuleSpec, birim fiyatı ₺/Wp)
 # Fiyatları ₺/Wp (TRY) cinsinden tutalım (Örn: 20-30 ₺/Wp)
 # Ev tipi bir sistemde Wp maliyeti: 28 ₺/Wp
 # Ticari/Endüstriyel bir sistemde Wp maliyeti: 18 ₺/Wp
 
-MODULE_CATALOG: Dict[str, Dict[str, Any]] = {
+MODULE_CATALOG: dict[str, dict[str, Any]] = {
     "generic_580_topcon": {
         "label": "Jenerik 580 W TOPCon (Ticari / Endüstriyel)",
         "spec": ModuleSpec(
@@ -52,7 +53,7 @@ MODULE_CATALOG: Dict[str, Dict[str, Any]] = {
     }
 }
 
-INVERTER_CATALOG: Dict[str, Dict[str, Any]] = {
+INVERTER_CATALOG: dict[str, dict[str, Any]] = {
     "generic_100kw": {
         "label": "Jenerik 100 kW String (Ticari)",
         "spec": InverterSpec(

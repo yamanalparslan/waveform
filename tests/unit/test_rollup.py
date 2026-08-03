@@ -173,3 +173,45 @@ def test_counter_energy_handles_lifetime_counter() -> None:
 
 def test_counter_energy_is_zero_without_readings() -> None:
     assert counter_energy_kwh([]) == 0.0
+
+
+# --- Sayaç penceresi (web/routes) --------------------------------------------
+# Bu iki test `web.routes` içindeki pencere yardımcılarını sınıyor. Burada
+# durmalarının sebebi konu: ikisi de sayaç semantiğiyle ilgili ve `rollup`
+# sayaç mantığının evi.
+
+
+def test_counter_window_is_not_floored_to_the_grid():
+    """Sayaç penceresi *şu ana* kadar uzar; ızgara sınırına inmez.
+
+    `_elapsed_window` bitişi son 15 dakikalık sınıra indirir — aralık ortalaması
+    olan güç için doğru. Kümülatif sayaca uygulanınca gerçekten üretilmiş enerji
+    siliniyor: 03.08.2026'da panel 406 kWh yerine 183 kWh gösterdi, çünkü çekim
+    kesintisinden sonraki ilk okuma (10:02) 10:00 sınırının dışında kalmıştı.
+    """
+    from datetime import UTC, date, datetime
+
+    from luminmind.web.routes import _counter_window, _elapsed_window
+
+    day = date(2026, 8, 3)
+    now = datetime(2026, 8, 3, 7, 9, 30, tzinfo=UTC)  # 10:09:30 TRT
+
+    _, elapsed_stop = _elapsed_window(day, now)
+    _, counter_stop = _counter_window(day, now)
+
+    assert elapsed_stop == datetime(2026, 8, 3, 7, 0, tzinfo=UTC)  # ızgaraya indi
+    assert counter_stop == now  # sayaç kırpılmadı
+    assert counter_stop > elapsed_stop
+
+
+def test_counter_window_does_not_leak_into_the_next_day():
+    """Geçmiş günlerde pencere gün sonunda durur — `now` etkisiz kalmalı."""
+    from datetime import UTC, date, datetime
+
+    from luminmind.web.routes import _counter_window
+
+    start, stop = _counter_window(
+        date(2026, 8, 1), datetime(2026, 8, 3, 7, 0, tzinfo=UTC)
+    )
+    assert start == datetime(2026, 7, 31, 21, 0, tzinfo=UTC)  # 01.08 00:00 TRT
+    assert stop == datetime(2026, 8, 1, 21, 0, tzinfo=UTC)  # 02.08 00:00 TRT

@@ -122,11 +122,11 @@ def normalize_tescom_devices(
         factory = item.get("fabrika_id")
         factory_key = str(factory) if factory is not None else ""
         error_code = item.get("hata_kodu")
-        
+
         dev_id = item.get("id")
         if dev_id is None:
             dev_id = item.get("slave_id")
-            
+
         points.append(
             TelemetryPoint(
                 vendor=Vendor.TESCOM,
